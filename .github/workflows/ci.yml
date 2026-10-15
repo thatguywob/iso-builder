@@ -565,7 +565,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: tuna-os/tunaOS
-          ref: 4f870abb6341b35fa2b64e2da8e63b22154b2663
+          ref: ad55e2678c165e546466ecd9e04a882027ec4abe
           path: tunaos-e2e
 
       - name: verify LUKS install + reboot under QEMU (${{ matrix.edition.slug }})
