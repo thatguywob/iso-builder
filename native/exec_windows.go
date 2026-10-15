@@ -280,11 +280,14 @@ func installKernelUpdate(onLine func(string)) error {
 // this dependency-free — it ships with every Windows PowerShell this app
 // already shells out to elsewhere in this file.
 func verifyMicrosoftSignature(path string) error {
+	// Single-quoted PowerShell literal (embedded ' doubled): Go's %q
+	// backslash-escaping is not PowerShell syntax, and a double-quoted
+	// string would expand any $ or backtick in the temp path.
 	script := fmt.Sprintf(
-		`$sig = Get-AuthenticodeSignature -LiteralPath %q; `+
+		`$sig = Get-AuthenticodeSignature -LiteralPath '%s'; `+
 			`Write-Output "STATUS:$($sig.Status)"; `+
 			`if ($sig.SignerCertificate) { Write-Output "SUBJECT:$($sig.SignerCertificate.Subject)" }`,
-		path,
+		strings.ReplaceAll(path, "'", "''"),
 	)
 	out, err := exec.Command("powershell", "-NoProfile", "-Command", script).CombinedOutput()
 	output := strings.TrimSpace(string(out))
