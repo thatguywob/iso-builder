@@ -64,3 +64,10 @@ deploys the app and relay. Public download routes, R2 publication, retention and
 Admission timestamps use UTC whole seconds (`YYYY-MM-DDTHH:MM:SSZ`), as the
 strict harness emits. Both consumers reject dates that are invalid and strings
 without this format. Both trim browser names before the native checks.
+
+The minimum gate also needs browser origin, a build receipt digest and the final
+ISO digest. The producer must match these to a separate observation from a
+trusted browser-build workflow and artifact. A self-asserted origin flag does
+not prove that association. The current producer lacks this integration and
+must keep targets unqualified. A native install result does not establish
+browser origin. Placeholder browser names and versions cannot pass the gate.

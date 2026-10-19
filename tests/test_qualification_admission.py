@@ -17,7 +17,7 @@ def valid_entry():
     entry = next(copy.deepcopy(e) for e in json.loads((ROOT / 'app/public/catalog-snapshot.json').read_text())['targets'] if e['availability']['available'])
     digest = 'sha256:' + '1' * 64
     entry['resolvedInputs'].update(liveOverlayDigest=digest, liveOverlayBaseDigest=entry['resolvedInputs']['platformManifestDigest'], engineRevision=digest, installerRevision=digest)
-    entry['qualification'].update(status='qualified', reason=None, receiptDigest=digest, qualifiedAt='2026-10-19T00:00:00Z', browser=dict(name='chromium', version='123.0', memory_gib=16, free_disk_gib=40))
+    entry['qualification'].update(buildOrigin='browser', browserBuildReceiptDigest=digest, isoDigest=digest, status='qualified', reason=None, receiptDigest=digest, qualifiedAt='2026-10-19T00:00:00Z', browser=dict(name='chromium', version='123.0', memory_gib=16, free_disk_gib=40))
     return entry
 
 
@@ -96,5 +96,23 @@ def test_native_provenance_cannot_hide_behind_whitespace(name):
 def test_wrong_type_inputs_fail_closed(field, value):
     e = valid_entry()
     e[field] = value
+    assert not vc.qualification_provenance_complete(e)
+    assert browser_status(e) == 'unqualified'
+
+
+@pytest.mark.parametrize('field,value', [('name', 'unknown'), ('name', ' n/a '),
+                                         ('version', 'unknown'), ('version', 'placeholder')])
+def test_placeholder_browser_profile_is_unqualified(field, value):
+    e = valid_entry()
+    e['qualification']['browser'][field] = value
+    assert not vc.qualification_provenance_complete(e)
+    assert browser_status(e) == 'unqualified'
+
+
+@pytest.mark.parametrize('field,value', [('buildOrigin', None), ('buildOrigin', 'native'),
+                                         ('browserBuildReceiptDigest', None), ('isoDigest', None)])
+def test_build_origin_and_artifact_binding_are_required(field, value):
+    e = valid_entry()
+    e['qualification'][field] = value
     assert not vc.qualification_provenance_complete(e)
     assert browser_status(e) == 'unqualified'

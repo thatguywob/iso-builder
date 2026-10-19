@@ -81,7 +81,9 @@ def qualification_provenance_complete(entry: dict) -> bool:
         return False
     digests = [ri.get(key) for key in ("platformManifestDigest", "liveOverlayDigest",
                "liveOverlayBaseDigest", "installerRevision", "engineRevision")]
-    digests.append(q.get("receiptDigest"))
+    digests.extend(q.get(key) for key in ("receiptDigest", "browserBuildReceiptDigest", "isoDigest"))
+    if q.get("buildOrigin") != "browser":
+        return False
     if not all(isinstance(value, str) and DIGEST_RE.fullmatch(value) for value in digests):
         return False
     if ri["liveOverlayBaseDigest"] != ri["platformManifestDigest"]:
@@ -95,7 +97,9 @@ def qualification_provenance_complete(entry: dict) -> bool:
         return False
     if not all(isinstance(browser.get(key), str) and browser[key].strip() for key in ("name", "version")):
         return False
-    if browser["name"].strip().lower().startswith("native"):
+    if browser["name"].strip().lower().startswith("native") or browser["name"].strip().lower() in {"unknown", "none", "null", "n/a", "placeholder", "unspecified"}:
+        return False
+    if not re.fullmatch(r"[1-9][0-9]*(?:\.[0-9]+)*", browser["version"].strip()):
         return False
     import math
     if not all(type(browser.get(key)) in (int, float) and math.isfinite(browser[key])

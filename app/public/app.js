@@ -47,13 +47,15 @@ function catalogQualification(entry) {
   const positive = (v) => typeof v === "number" && Number.isFinite(v) && v > 0;
   const complete = entry?.availability?.available === true &&
     [ri.platformManifestDigest, ri.liveOverlayDigest, ri.liveOverlayBaseDigest,
-      ri.installerRevision, ri.engineRevision, q.receiptDigest].every(digest) &&
-    ri.liveOverlayBaseDigest === ri.platformManifestDigest &&
+      ri.installerRevision, ri.engineRevision, q.receiptDigest,
+      q.browserBuildReceiptDigest, q.isoDigest].every(digest) &&
+    q.buildOrigin === "browser" && ri.liveOverlayBaseDigest === ri.platformManifestDigest &&
     typeof q.qualifiedAt === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(q.qualifiedAt) &&
     Number.isFinite(Date.parse(q.qualifiedAt)) && new Date(q.qualifiedAt).toISOString() === q.qualifiedAt.replace("Z", ".000Z") &&
     typeof browser.name === "string" && browser.name.trim() !== "" &&
     !browser.name.trim().toLowerCase().startsWith("native") &&
-    typeof browser.version === "string" && browser.version.trim() !== "" &&
+    !["unknown", "none", "null", "n/a", "placeholder", "unspecified"].includes(browser.name.trim().toLowerCase()) &&
+    typeof browser.version === "string" && /^[1-9][0-9]*(?:\.[0-9]+)*$/.test(browser.version.trim()) &&
     positive(browser.memory_gib) && positive(browser.free_disk_gib);
   return complete ? q : { ...q, status: "unqualified", reason: "incomplete-qualification-provenance" };
 }

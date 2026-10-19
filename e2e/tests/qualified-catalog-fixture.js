@@ -15,8 +15,9 @@ async function qualifiedCatalogFixture(page) {
     });
     Object.assign(entry.qualification, {
       status: 'qualified', reason: null, receiptDigest: digest,
+      buildOrigin: 'browser', browserBuildReceiptDigest: digest, isoDigest: digest,
       qualifiedAt: '2026-10-19T00:00:00Z',
-      browser: { name: 'chromium', version: 'test-fixture', memory_gib: 16, free_disk_gib: 40 },
+      browser: { name: 'chromium', version: '140.0', memory_gib: 16, free_disk_gib: 40 },
     });
   }
   await page.route('**/catalog-snapshot.json', route => route.fulfill({ json: doc }));
