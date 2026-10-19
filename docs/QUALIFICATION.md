@@ -56,3 +56,7 @@ This source repair does not deploy, change public download routing, or alter R2
 publication or retention. Existing download objects remain retained. A maintainer
 must review and approve deployment; merging main automatically deploys the app
 and relay.
+
+Admission timestamps use UTC whole seconds (YYYY-MM-DDTHH:MM:SSZ), matching
+the strict harness emitter. Both consumers reject invalid calendar dates and
+non-ISO or timezone-free strings. Browser names are trimmed before native checks.

@@ -71,3 +71,30 @@ def test_strict_path_cannot_receive_generic_image_injection():
     assert 'env -u TBOX_E2E_IMAGE' in strict
     assert 'TBOX_E2E_IMAGE="$TBOX_E2E_IMAGE"' not in strict
     assert 'sudo TBOX_E2E_IMAGE="$TBOX_E2E_IMAGE"' in workflow  # reference path retained
+
+
+@pytest.mark.parametrize('stamp', ['2026', 'October 19, 2026', '2026-10-19',
+                                 '2026-02-30T00:00:00Z', '2026-10-19T25:00:00Z',
+                                 '2026-10-19T00:00:00', 'not-a-date', None])
+def test_timestamp_contract_is_utc_seconds_in_both_consumers(stamp):
+    e = valid_entry()
+    e['qualification']['qualifiedAt'] = stamp
+    assert not vc.qualification_provenance_complete(e)
+    assert browser_status(e) == 'unqualified'
+
+
+@pytest.mark.parametrize('name', [' native', '\tNATIVE-qemu ', '\nnative'])
+def test_native_provenance_cannot_hide_behind_whitespace(name):
+    e = valid_entry()
+    e['qualification']['browser']['name'] = name
+    assert not vc.qualification_provenance_complete(e)
+    assert browser_status(e) == 'unqualified'
+
+
+@pytest.mark.parametrize('field', ['resolvedInputs', 'availability'])
+@pytest.mark.parametrize('value', [[], 'bad', 7])
+def test_wrong_type_inputs_fail_closed(field, value):
+    e = valid_entry()
+    e[field] = value
+    assert not vc.qualification_provenance_complete(e)
+    assert browser_status(e) == 'unqualified'

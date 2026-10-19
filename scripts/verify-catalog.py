@@ -74,7 +74,11 @@ def qualification_provenance_complete(entry: dict) -> bool:
 
     q = entry.get("qualification") or {}
     ri = entry.get("resolvedInputs") or {}
+    if not isinstance(q, dict) or not isinstance(ri, dict):
+        return False
     browser = q.get("browser") or {}
+    if not isinstance(browser, dict):
+        return False
     digests = [ri.get(key) for key in ("platformManifestDigest", "liveOverlayDigest",
                "liveOverlayBaseDigest", "installerRevision", "engineRevision")]
     digests.append(q.get("receiptDigest"))
@@ -83,18 +87,22 @@ def qualification_provenance_complete(entry: dict) -> bool:
     if ri["liveOverlayBaseDigest"] != ri["platformManifestDigest"]:
         return False
     try:
-        datetime.fromisoformat(q["qualifiedAt"].replace("Z", "+00:00"))
+        stamp = q["qualifiedAt"]
+        if not isinstance(stamp, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", stamp):
+            return False
+        datetime.fromisoformat(stamp.replace("Z", "+00:00"))
     except (KeyError, TypeError, ValueError, AttributeError):
         return False
     if not all(isinstance(browser.get(key), str) and browser[key].strip() for key in ("name", "version")):
         return False
-    if browser["name"].lower().startswith("native"):
+    if browser["name"].strip().lower().startswith("native"):
         return False
     import math
     if not all(type(browser.get(key)) in (int, float) and math.isfinite(browser[key])
                and browser[key] > 0 for key in ("memory_gib", "free_disk_gib")):
         return False
-    return (entry.get("availability") or {}).get("available") is True
+    availability = entry.get("availability")
+    return isinstance(availability, dict) and availability.get("available") is True
 
 
 def validate_snapshot(snapshot_path: Path | None = None) -> dict:

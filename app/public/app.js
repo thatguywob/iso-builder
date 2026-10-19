@@ -49,9 +49,10 @@ function catalogQualification(entry) {
     [ri.platformManifestDigest, ri.liveOverlayDigest, ri.liveOverlayBaseDigest,
       ri.installerRevision, ri.engineRevision, q.receiptDigest].every(digest) &&
     ri.liveOverlayBaseDigest === ri.platformManifestDigest &&
-    typeof q.qualifiedAt === "string" && Number.isFinite(Date.parse(q.qualifiedAt)) &&
+    typeof q.qualifiedAt === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(q.qualifiedAt) &&
+    Number.isFinite(Date.parse(q.qualifiedAt)) && new Date(q.qualifiedAt).toISOString() === q.qualifiedAt.replace("Z", ".000Z") &&
     typeof browser.name === "string" && browser.name.trim() !== "" &&
-    !browser.name.toLowerCase().startsWith("native") &&
+    !browser.name.trim().toLowerCase().startsWith("native") &&
     typeof browser.version === "string" && browser.version.trim() !== "" &&
     positive(browser.memory_gib) && positive(browser.free_disk_gib);
   return complete ? q : { ...q, status: "unqualified", reason: "incomplete-qualification-provenance" };
