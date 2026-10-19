@@ -12,6 +12,7 @@
 const { test, expect } = require("./fixtures");
 const path = require("path");
 const fs = require("fs");
+const { qualifiedCatalogFixture } = require("./qualified-catalog-fixture");
 const CATALOG = require("../../app/public/catalog-snapshot.json");
 
 const SHOTS = process.env.TBOX_E2E_SHOTS
@@ -111,6 +112,7 @@ test.describe("iso builder", () => {
   });
 
   test("deep-link preset selects target and catalog inspect transfers zero image layers", async ({ page }) => {
+    const fixtureCatalog = await qualifiedCatalogFixture(page);
     const blobRequests = [];
     const manifestRequests = [];
     page.on("request", (req) => {
@@ -128,7 +130,7 @@ test.describe("iso builder", () => {
     await inspectPreset(page);
 
     await expect(page.locator("#facts")).toBeVisible();
-    const entry = CATALOG.targets.find(
+    const entry = fixtureCatalog.targets.find(
       (target) => target.targetKey === "yellowfin:gnome:linux/amd64/v2",
     );
     await expect(page.locator("#facts")).toContainText(entry.facts.kernelVer);
@@ -162,6 +164,7 @@ test.describe("iso builder", () => {
 
   for (const control of ["platform", "variant", "image", "edition"]) {
     test(`changing ${control} after inspect clears readiness and rejects stale builds`, async ({ page }) => {
+      await qualifiedCatalogFixture(page);
       await page.goto("/?variant=bonito&flavor=kde&platform=linux%2Famd64");
       await inspectPreset(page);
       await expect(page.locator("#build")).toBeEnabled();
@@ -201,6 +204,17 @@ test.describe("iso builder", () => {
     });
   }
 
+  test("published incomplete provenance keeps browser build blocked and preserves local fallback", async ({ page }) => {
+    await page.goto("/?variant=yellowfin&flavor=gnome&platform=linux%2Famd64%2Fv2");
+    await inspectPreset(page);
+    await expect(page.locator(".badge.status")).toContainText("unqualified");
+    await expect(page.locator("#build")).toBeDisabled();
+    await expect(page.locator("#fallbackcard")).toBeVisible();
+    const request = JSON.parse(await page.locator("#fallbackjson").textContent());
+    expect(request.target.platform).toBe("linux/amd64/v2");
+    expect(request.qualificationId).toBeUndefined();
+  });
+
   test("an unqualified platform displays its status and exact local-build target", async ({ page }) => {
     await page.goto("/?variant=yellowfin&flavor=gnome&platform=linux%2Farm64");
     await inspectPreset(page);
@@ -214,6 +228,7 @@ test.describe("iso builder", () => {
   });
 
   test("sink write rejection aborts build without reporting Done and surfaces target-preserving fallback", async ({ page }) => {
+    await qualifiedCatalogFixture(page);
     await page.goto("/?variant=sailfin&flavor=xfce&platform=linux%2Famd64");
     await inspectPreset(page);
     await expect(page.locator("#build")).toBeEnabled();
@@ -265,6 +280,7 @@ test.describe("iso builder", () => {
   });
 
   test("completed build saves ISO and populates USB-write guidance with target-specific filename", async ({ page }) => {
+    await qualifiedCatalogFixture(page);
     await page.goto("/?variant=bonito&flavor=kde&platform=linux%2Famd64");
     await inspectPreset(page);
     await expect(page.locator("#build")).toBeEnabled();
@@ -352,7 +368,8 @@ test.describe("iso builder", () => {
 
     await expect(page.locator("#facts")).toBeVisible();
     await expect(page.locator(".badge.de")).toContainText("gnome");
-    await expect(page.locator("#build")).toBeEnabled();
+    await expect(page.locator("#build")).toBeDisabled();
+    await expect(page.locator("#fallbackcard")).toBeVisible();
     await shot(page, "03-inspected.png");
 
     // Advanced customization panel: per-DE flatpak defaults are prefilled.

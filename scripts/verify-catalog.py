@@ -68,6 +68,47 @@ OFFERED_VARIANTS = {
 DESKTOP_IDS = {"gnome", "kde", "cosmic", "niri", "xfce"}
 
 
+def qualification_provenance_complete(entry: dict) -> bool:
+    """Minimum consumer admission, not a substitute for receipt verification."""
+    from datetime import datetime
+
+    q = entry.get("qualification") or {}
+    ri = entry.get("resolvedInputs") or {}
+    if not isinstance(q, dict) or not isinstance(ri, dict):
+        return False
+    browser = q.get("browser") or {}
+    if not isinstance(browser, dict):
+        return False
+    digests = [ri.get(key) for key in ("platformManifestDigest", "liveOverlayDigest",
+               "liveOverlayBaseDigest", "installerRevision", "engineRevision")]
+    digests.extend(q.get(key) for key in ("receiptDigest", "browserBuildReceiptDigest", "isoDigest"))
+    if q.get("buildOrigin") != "browser":
+        return False
+    if not all(isinstance(value, str) and DIGEST_RE.fullmatch(value) for value in digests):
+        return False
+    if ri["liveOverlayBaseDigest"] != ri["platformManifestDigest"]:
+        return False
+    try:
+        stamp = q["qualifiedAt"]
+        if not isinstance(stamp, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", stamp):
+            return False
+        datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return False
+    if not all(isinstance(browser.get(key), str) and browser[key].strip() for key in ("name", "version")):
+        return False
+    if browser["name"].strip().lower().startswith("native") or browser["name"].strip().lower() in {"unknown", "none", "null", "n/a", "placeholder", "unspecified"}:
+        return False
+    if not re.fullmatch(r"[1-9][0-9]*(?:\.[0-9]+)*", browser["version"].strip()):
+        return False
+    import math
+    if not all(type(browser.get(key)) in (int, float) and math.isfinite(browser[key])
+               and browser[key] > 0 for key in ("memory_gib", "free_disk_gib")):
+        return False
+    availability = entry.get("availability")
+    return isinstance(availability, dict) and availability.get("available") is True
+
+
 def validate_snapshot(snapshot_path: Path | None = None) -> dict:
     """Load and validate a CatalogSnapshot v1 JSON file."""
     path = snapshot_path or CATALOG_SNAPSHOT
@@ -93,6 +134,8 @@ def validate_snapshot(snapshot_path: Path | None = None) -> dict:
         qual = entry.get("qualification") or {}
         if qual.get("status") not in VALID_STATUSES:
             sys.exit(f"invalid qualification.status in {path}: {qual.get('status')!r}")
+        if qual.get("status") == "qualified" and not qualification_provenance_complete(entry):
+            sys.exit(f"qualified entry {entry.get('targetKey')} has incomplete qualification provenance in {path}")
         avail = entry.get("availability") or {}
         pm_digest = (entry.get("resolvedInputs") or {}).get("platformManifestDigest")
         if avail.get("available") and not DIGEST_RE.match(str(pm_digest or "")):

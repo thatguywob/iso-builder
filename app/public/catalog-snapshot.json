@@ -4,7 +4,7 @@
   "kind": "catalog-snapshot",
   "producerRevision": "tunaos-build-config-v1",
   "schemaVersion": 1,
-  "snapshotDigest": "sha256:b77f4c4f1e54d541c924c80519c102a416e8f750d0a783eff100d53d3fd1609d",
+  "snapshotDigest": "sha256:f11a1e621146510e729032bd9ddbb01ba6787b80aaa7a404b241e2d1d10e785b",
   "targets": [
     {
       "availability": {
@@ -567,14 +567,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:cc1270f1aa89e6211ea9e7fb58cbf5cb338ff2c40a74055cada6824c1373834a",
         "resources": {
           "compressedBytes": 2044171796,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -892,14 +892,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:35c6c0819b43bb564924efc60e801931e687921e38ca9008637ebca8bfebd3d1",
         "resources": {
           "compressedBytes": 1980579439,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -1217,14 +1217,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:1e8993963d9c66c66b0d50d0772832b915474e730f4824dc5b58c5d077f8466e",
         "resources": {
           "compressedBytes": 2104241604,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -1277,14 +1277,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:134e95faaf4186fbdfb9377bde7e1a95b63bae748b48cc73a53bdac2c9e440e9",
         "resources": {
           "compressedBytes": 2005353888,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -1549,14 +1549,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:30a88503d1c76191e2ce1d097b066d1076e1625e2cf7bb9e31cea80b1bf23565",
         "resources": {
           "compressedBytes": 1918813355,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -1609,14 +1609,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:76532b45d3a210583612512cdbc2e8792fa8d390ff2436b731782b7c6b40de4e",
         "resources": {
           "compressedBytes": 1803182057,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -1881,14 +1881,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:d4f66f32a2bca8a44fe99ad3ca8a78371bea840332e819d78d25a5370aff8baf",
         "resources": {
           "compressedBytes": 1709796959,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -3902,14 +3902,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:0af78cc00215b766503558bd79c409cac5dbb1c9bbff1e4b7177e568c705d164",
         "resources": {
           "compressedBytes": 2613417964,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -3962,14 +3962,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:3a8973774791dd31de3505e36fd85007bc952029cf7a63b9b4e8226459fb27cd",
         "resources": {
           "compressedBytes": 2478193114,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -4347,14 +4347,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:d05141366a2a1394c1148c9e41f22efe3e4f9f86420112c5e56781a121d867dd",
         "resources": {
           "compressedBytes": 2583934657,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -4407,14 +4407,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:fb81bc2a5e15977474d05e6f8f002c6d899f88ca3fa79c8653daec9be140837c",
         "resources": {
           "compressedBytes": 2454524662,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -4580,14 +4580,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:68f6a8cfc46f6d66a95d6a6905652fa130fe4b49c8aabfe99a545bdb38290d78",
         "resources": {
           "compressedBytes": 3301592834,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -4640,14 +4640,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:32d43cc7c3bf8ef33d20a0fc3e0bcc3835fefb9526280b86ffe2e84e4de7dfc3",
         "resources": {
           "compressedBytes": 3140883902,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -4806,14 +4806,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:24ebed35cdc01093f423b488706fecd2cad884e526946a1516d6f07fef288263",
         "resources": {
           "compressedBytes": 2179936062,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -4866,14 +4866,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:ac5d8c9516b3de635fef7d982e1cfb9f823d2e618e3bfddd6c4a20206aedb602",
         "resources": {
           "compressedBytes": 2053182900,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -5032,14 +5032,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:635488a5f5320a9af2256f05a351f3c7e1e4fddbea0ebe5670494e77bda6613c",
         "resources": {
           "compressedBytes": 2713164193,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -5092,14 +5092,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:121ee0519831733c13b2cd79e70f98a59c5a25958e89744a3154f952a1e1cc40",
         "resources": {
           "compressedBytes": 2566808859,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -6106,14 +6106,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:61bae171f7bbb2e59d2f334a1fc460c51bab1fea8b0f32b7f90fce38e671b4c4",
         "resources": {
           "compressedBytes": 1340212962,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -6325,14 +6325,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:f2b4fdbea9022277ec16f644190cc27e0b0583cfd626e0e71e03afaf3021433b",
         "resources": {
           "compressedBytes": 1109276326,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -6544,14 +6544,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:26daaea25dd6fa3229dc18c8794a9175658e72f54255d0adda2d3a3e25470312",
         "resources": {
           "compressedBytes": 2073994754,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -6816,14 +6816,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:a4df0e9bced89a08efe2e06fb38bf9cffbbe0419cbd3b2140df36b0cfc98ea4c",
         "resources": {
           "compressedBytes": 2184235538,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -6876,14 +6876,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:f07ae1dc20b71a99b9312a862fc228c671be0df49eab3d00bd5af49eba8624b7",
         "resources": {
           "compressedBytes": 2174211501,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -6936,14 +6936,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:b067c9533a2871c777a320c58366b4b40ca3b45def506832491a04c14bf4c75f",
         "resources": {
           "compressedBytes": 1976881424,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -6996,14 +6996,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:8737c4032efa240662088ad4da08e4548699c4ad727956a7121603144a2d9523",
         "resources": {
           "compressedBytes": 1969808509,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -7056,14 +7056,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:b8873554f0a181bc342f9da3c24a3c2f556603e1775fb75d680bfc5c1644bc8d",
         "resources": {
           "compressedBytes": 1803467462,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -7116,14 +7116,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:7a4d21246f881b447bafb52ea577c6f84c6fb4e4b9631832c34510fd271160ee",
         "resources": {
           "compressedBytes": 1798688784,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -7282,14 +7282,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:b3d9c07b3b1b6f313678efb9f6c1b5cddcd997e0ed2f399d9a0ad61821bb4b2c",
         "resources": {
           "compressedBytes": 3541207386,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -7395,14 +7395,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:1e651d95b4d61b540c0f1788099f7fd4db4cb9b06d50e8cf18f5365b134a1571",
         "resources": {
           "compressedBytes": 2683575187,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -8356,14 +8356,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:f3579564af01c41ba913a21277db42762ae7901bd631833ddbb6a1eb9b9b75db",
         "resources": {
           "compressedBytes": 2158635219,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -8681,14 +8681,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:e8c3292f33e6e98c231c6bf29d3080224e72b20519c7dedab4b5a359a8f1fddf",
         "resources": {
           "compressedBytes": 2241350510,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -8741,14 +8741,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:6c8b3e2523d0e4f86701a3c52e91461375e3e03243152447649fe479e0e90519",
         "resources": {
           "compressedBytes": 2343631618,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -9013,14 +9013,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:4402a1108ee039aca67744c1c4683308ea31d134e4cecb413229001117d47696",
         "resources": {
           "compressedBytes": 2169534873,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -9338,14 +9338,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:5d4de62adb1557e54179bb979ede49d4104644e4b2a2745ca22f5d71930b151e",
         "resources": {
           "compressedBytes": 1716167643,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -9769,14 +9769,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:f0b38dbf492981efd955007071885015e6557cab214da4a1550545475f2aa1ed",
         "resources": {
           "compressedBytes": 1845097033,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -9988,14 +9988,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:a7a16934dc8be7dc28e3b5e5446248d2fcb5fa1c093263798b9fa1e109143ba5",
         "resources": {
           "compressedBytes": 1742165475,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -10101,14 +10101,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:9435156e5c61259cb98658d1da3819c124f781b017a9653edab09820f50b8102",
         "resources": {
           "compressedBytes": 1865291060,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -10161,14 +10161,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:f85fcdd981a54c7140d1afced4b035eb0ae125be04f8f453e12860261206d158",
         "resources": {
           "compressedBytes": 1904048895,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -10221,14 +10221,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:5246810285ea92e9c7500f89b8cb00cba1db7ad8c2b9dbaa4ac0e69b004bf80d",
         "resources": {
           "compressedBytes": 2225917883,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -10334,14 +10334,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:f5f587e9623c62c57783e8b1c566ca17e86fb99a1f570417ab3fcf703ffc2a02",
         "resources": {
           "compressedBytes": 1624489022,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -10447,14 +10447,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:8ebcde128474f92c60b75000a5c5a9b2390352984fccf9418bb5ba40dcee5b21",
         "resources": {
           "compressedBytes": 1680268998,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -11090,14 +11090,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:4f74670e0644be55e259e0ecd186f56fd3defbafbfb65e55978d5f4f6e943a5c",
         "resources": {
           "compressedBytes": 1897088938,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -11415,14 +11415,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:cec983eb16183953e01e61bc00dadd84b3abb37ac48fc7714c9c6f10e78151a7",
         "resources": {
           "compressedBytes": 1834956338,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -11740,14 +11740,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:5192f38f36d0871340468fbdb314591c0f43c9107e741f71fe51aac7eab7b211",
         "resources": {
           "compressedBytes": 1975368017,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -11800,14 +11800,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:cb0dbdceeff6a7e29a78e27ef520d09cc8fea5ca00aa27828a8879c3ba10c941",
         "resources": {
           "compressedBytes": 1869207521,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -12072,14 +12072,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:70a1585e09af56f7bb6e8d224dd68f338f57bccffe44dd09d6161e805f2e40c6",
         "resources": {
           "compressedBytes": 1762828614,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -12132,14 +12132,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:413a0384b64b8439047c8bf29613987bc6d23b208de608c9839e51c19de6dc39",
         "resources": {
           "compressedBytes": 1651740086,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -12192,14 +12192,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:0cdcd527b2aac0a9e29e6f5ad528dec4a000b292d4d823e99f11a1f025d14182",
         "resources": {
           "compressedBytes": 1559524359,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -13259,14 +13259,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:5c9103dafdca2ecca259139468ea03eb060b1ff45497018ddcea23d5ed9f4d8f",
         "resources": {
           "compressedBytes": 1867977282,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -13584,14 +13584,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:7c56ce0de9ac070b6832e6f9874c96ca88d46da0c50ff9600afbd5e5d22f3785",
         "resources": {
           "compressedBytes": 1802434486,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -13909,14 +13909,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:8391848f6c02bcbdc395f99f05b2c4a035e473fa204b33317601af5e66904f99",
         "resources": {
           "compressedBytes": 1940761693,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -13969,14 +13969,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:4ba525dc72069d1cae32585cfe6d6575f774976ad01165c97bbdb0478facd7f3",
         "resources": {
           "compressedBytes": 1842323628,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -14241,14 +14241,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:0d5e2106c7349c4e032382cce720205a5ed27f0cf932d6e1939e968c4bd7ec58",
         "resources": {
           "compressedBytes": 1742671260,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -14301,14 +14301,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:d1c749cc3bf6ae57d4b36706a658a575435237ae2265349754230169f3b48080",
         "resources": {
           "compressedBytes": 1625636839,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
@@ -14573,14 +14573,14 @@
           "wasm32": true
         },
         "qualifiedAt": "2026-10-17T00:00:00Z",
-        "reason": null,
+        "reason": "incomplete-qualification-provenance",
         "receiptDigest": "sha256:4aa23ca5c649e10f4e1c35db2a97925751140631408d2120a8af0b49b5248149",
         "resources": {
           "compressedBytes": 1532012737,
           "layerCount": 65,
           "minFreeStorageBytes": 9500000000
         },
-        "status": "qualified"
+        "status": "unqualified"
       },
       "required": true,
       "resolvedInputs": {
