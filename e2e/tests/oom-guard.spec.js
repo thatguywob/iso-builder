@@ -1,3 +1,4 @@
+const { qualifiedCatalogFixture } = require("./qualified-catalog-fixture");
 // The engine's out-of-memory guard, tested without an engine.
 //
 // The real failure needs a multi-GB pull and ~20 minutes to reproduce
@@ -22,6 +23,7 @@ async function armGuard(page, mb) {
 test.describe("engine OOM guard", () => {
   test.beforeEach(async ({ page }) => {
     await page.clock.install();
+    await qualifiedCatalogFixture(page);
     await page.goto("/");
   });
 

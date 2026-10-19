@@ -99,6 +99,20 @@ jobs:
   # Windows- or macOS-only file would merge with fully green CI under
   # the old single-job setup. Real native runners close that gap outright
   # instead of fighting cross-compiled cgo/vet limitations.
+  qualification-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: python -m pip install pytest
+      - run: python -m pytest -q tests
+
   native-linux:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -630,7 +644,7 @@ jobs:
           # image ref through to the harness.
           if [ "${QUALIFY}" = "true" ]; then
             echo "Running strict offline-GUI verification..."
-            sudo TBOX_E2E_IMAGE="$TBOX_E2E_IMAGE" "${GITHUB_WORKSPACE}/tunaos-e2e/scripts/iso-e2e.sh" "$ISO" --strict-offline-gui \
+            sudo env -u TBOX_E2E_IMAGE "${GITHUB_WORKSPACE}/tunaos-e2e/scripts/iso-e2e.sh" "$ISO" --strict-offline-gui \
               --output "luks-verify-${SLUG}" \
               --timeout 900
           else
