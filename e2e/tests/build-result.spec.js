@@ -208,16 +208,12 @@ test.describe("browser result lifecycle", () => {
   }
   test("changed options during sink close cannot republish an obsolete result", async ({ page }) => {
     await readyPage(page);
+    await page.getByText("Advanced — customize (flatpaks, packages, repos)", { exact: true }).click();
     await page.evaluate(() => { window.__pauseClose = true; });
     await page.locator("#build").click();
     await page.waitForFunction(() => window.__resumeClose);
-    await expect(page.locator("#label")).toBeDisabled();
-    // Normal controls stay locked. Simulate an external/programmatic edit
-    // to exercise the stale-result guard without waiting for editability.
-    await page.locator("#label").evaluate(el => {
-      el.value = "CHANGED";
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    // Options are editable inside Advanced; open it before using normal input.
+    await page.locator("#label").fill("CHANGED");
     await page.evaluate(() => window.__resumeClose());
     await failed(page);
   });
