@@ -13,6 +13,7 @@ const { test, expect } = require("./fixtures");
 const path = require("path");
 const fs = require("fs");
 const { qualifiedCatalogFixture } = require("./qualified-catalog-fixture");
+const { observeLoadedWasm, loadedWasmMeasurement, hashSavedIso, diagnosticRecord } = require("./build-measurements");
 const CATALOG = require("../../app/public/catalog-snapshot.json");
 
 const SHOTS = process.env.TBOX_E2E_SHOTS
@@ -380,6 +381,7 @@ test.describe("iso builder", () => {
 
   test("full build streams a bootable ISO @full", async ({ page }) => {
     test.skip(!process.env.TBOX_E2E_FULL, "set TBOX_E2E_FULL=1 for the full build");
+    await page.addInitScript(observeLoadedWasm);
     const initrd = process.env.TBOX_E2E_INITRD_URL || "";
 
     // Without these, a stalled inspect reports only `Received: disabled` —
@@ -445,11 +447,12 @@ test.describe("iso builder", () => {
 
     // QualificationEvidence v1 (browser half): phase timings, resource
     // profile, and output identity for cold / unchanged-warm /
-    // related-image runs. Boundaries use Date.now() around the existing
+    // related-image runs. Boundaries use performance.now() around the existing
     // stage gates; peaks reuse the existing tboxWasmMB/tboxJsHeapMB
     // hooks; registry bytes reuse the layer-cache size counter. No new
     // engine instrumentation.
     const T0 = Date.now();
+    const inspectStartedAt = performance.now();
     const phases = { inspectMs: null, buildMs: null, saveMs: null };
     const peaks = { tboxWasmMB: -1, tboxJsHeapMB: -1 };
     const samplePeaks = async () => {
@@ -535,18 +538,18 @@ test.describe("iso builder", () => {
     } finally {
       inspectWatch.cancel();
     }
-    phases.inspectMs = Date.now() - T0;
+    phases.inspectMs = performance.now() - inspectStartedAt;
     await samplePeaks();
 
     const buildWatch = watch("build", BUILD_STALL_MS);
     let dl;
     try {
       const download = page.waitForEvent("download", { timeout: WAIT_MS });
-      const buildClickedAt = Date.now();
+      const buildClickedAt = performance.now();
       await page.locator("#build").click();
       await shot(page, "05-building.png");
       dl = await Promise.race([download, buildWatch.promise]);
-      phases.buildMs = Date.now() - buildClickedAt;
+      phases.buildMs = performance.now() - buildClickedAt;
       await samplePeaks();
     } catch (e) {
       throw await describe("build", e);
@@ -555,7 +558,7 @@ test.describe("iso builder", () => {
     }
     const out = process.env.TBOX_E2E_ISO_OUT || path.join(SHOTS, "..", "iso-builder-e2e-output.iso");
     console.log("saving iso to:", out, "(env override:", process.env.TBOX_E2E_ISO_OUT || "none", ")");
-    const saveStartedAt = Date.now();
+    const saveStartedAt = performance.now();
     await dl.saveAs(out);
     console.log("saved:", out, fs.statSync(out).size, "bytes");
     // Playwright reclaims download artifacts at context close — even the
@@ -565,7 +568,7 @@ test.describe("iso builder", () => {
       fs.copyFileSync(out, process.env.TBOX_E2E_ISO_COPY);
       console.log("copied to:", process.env.TBOX_E2E_ISO_COPY, fs.statSync(process.env.TBOX_E2E_ISO_COPY).size, "bytes");
     }
-    phases.saveMs = Date.now() - saveStartedAt;
+    phases.saveMs = performance.now() - saveStartedAt;
     await samplePeaks();
     const size = fs.statSync(out).size;
     expect(size).toBeGreaterThan(100 * 1024 * 1024);
@@ -629,6 +632,25 @@ test.describe("iso builder", () => {
     fs.mkdirSync(path.dirname(evPath), { recursive: true });
     fs.writeFileSync(evPath, `${JSON.stringify(evidence, null, 2)}\n`);
     console.log("wrote browser evidence:", evPath);
+    // Separate diagnostics from legacy evidence. No source/overlay identity is
+    // inferred from the catalog; v2 emission requires a later engine contract.
+    const wasm = await loadedWasmMeasurement(page);
+    const iso = await hashSavedIso(out, size);
+    if (process.env.TBOX_E2E_ISO_COPY) {
+      const retained = await hashSavedIso(process.env.TBOX_E2E_ISO_COPY, size);
+      expect(retained).toEqual(iso);
+    }
+    const session = await page.context().newCDPSession(page);
+    let browserVersion;
+    try { browserVersion = await session.send("Browser.getVersion"); }
+    finally { await session.detach(); }
+    const measurements = diagnosticRecord({
+      iso, wasm, browser: browserVersion,
+      phasesMs: { inspect: phases.inspectMs, build: phases.buildMs, save: phases.saveMs },
+    });
+    const measurementPath = path.join(path.dirname(evPath), `build-measurements-${path.basename(evPath)}`);
+    fs.writeFileSync(measurementPath, `${JSON.stringify(measurements, null, 2)}\n`);
+    console.log("wrote diagnostic measurements:", measurementPath);
     fs.unlinkSync(out);
   });
 });
