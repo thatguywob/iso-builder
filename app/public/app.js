@@ -203,6 +203,7 @@ let facts = null;
 let wasmReady = null;
 let wasmNativeIntrospect = null;
 let wasmNativeBuildIso = null;
+let wasmNativeBuildIsoWithResult = null;
 
 // System packages (remora) + custom repo/setup commands (extra_run).
 const pkgItems = new Map();  // pkg -> {checked, summary}
@@ -316,6 +317,8 @@ function defaultLoadWasm() {
       go.run(r.instance);
       wasmNativeIntrospect = globalThis.tboxIntrospect || null;
       wasmNativeBuildIso = globalThis.tboxBuildIso || null;
+      wasmNativeBuildIsoWithResult = globalThis.tboxBuildIsoWithResult || null;
+      observeEngineResets();
       log("engine loaded (tacklebox wasm)");
     });
   return wasmReady;
@@ -374,6 +377,7 @@ function watchEngineMemory() {
         log("the engine cannot recover from this — reload the page to start over.");
         log("tracking: https://github.com/tuna-os/tacklebox/issues/156");
         const op = currentOp || rebuildCurrentOperation("failed");
+        clearBuildResult();
         op.state = "failed";
         op.ready = false;
         op.error = msg;
@@ -531,6 +535,57 @@ function deepFreeze(obj) {
 let operationSeq = 0;
 let currentOp = null;
 let activeBusyPhase = null;
+let buildResultRevision = 0;
+const observedResetFunctions = new WeakSet();
+const pendingEngineResets = new Set();
+
+function clearBuildResult() {
+  buildResultRevision++;
+  if (currentOp) {
+    currentOp.buildResult = null;
+    currentOp.outputDelivery = null;
+    currentOp.buildAttempt = null;
+  }
+  if ($("postcard")) $("postcard").classList.add("hidden");
+}
+
+function observeEngineResets() {
+  for (const name of ["tboxReset", "tboxResetAsync"]) {
+    const reset = globalThis[name];
+    if (typeof reset !== "function" || observedResetFunctions.has(reset)) continue;
+    const wrapped = function (...args) {
+      const busyRejection = error => String(error) === "tacklebox operation already in progress" ||
+        String(error) === "Error: tacklebox operation already in progress";
+      let result;
+      try { result = Reflect.apply(reset, this, args); }
+      catch (error) {
+        if (!busyRejection(error)) clearBuildResult();
+        throw error;
+      }
+      if (!result || typeof result.then !== "function") {
+        clearBuildResult();
+        return result; // preserve the legacy synchronous null return
+      }
+      // Do not leave a completed receipt usable while an async reset is
+      // unresolved. An active build has no public result; it waits below.
+      if (currentOp?.state === "completed") clearBuildResult();
+      const pending = Promise.resolve(result).then(value => {
+        clearBuildResult();
+        return value;
+      }, error => {
+        // Busy rejection changes no engine state. Cleanup failure means a
+        // reset was accepted and cleared state, so it invalidates the result.
+        if (!busyRejection(error)) clearBuildResult();
+        throw error;
+      });
+      pendingEngineResets.add(pending);
+      pending.then(() => pendingEngineResets.delete(pending), () => pendingEngineResets.delete(pending));
+      return pending;
+    };
+    observedResetFunctions.add(wrapped);
+    globalThis[name] = wrapped;
+  }
+}
 
 function isOperationBusy() {
   return Boolean(activeBusyPhase);
@@ -636,6 +691,7 @@ function buildRequestFromForm(existingOp = null) {
 }
 
 function rebuildCurrentOperation(state = "idle") {
+  clearBuildResult();
   const built = buildRequestFromForm();
   currentOp = {
     id: ++operationSeq,
@@ -644,6 +700,9 @@ function rebuildCurrentOperation(state = "idle") {
     inspectedVia: null,
     storageBlocked: false,
     error: null,
+    buildResult: null,
+    outputDelivery: null,
+    buildAttempt: null,
     ...built,
   };
   globalThis.tboxCurrentOperation = currentOp;
@@ -656,6 +715,7 @@ function syncOperationOptions() {
     return currentOp;
   }
   const built = buildRequestFromForm(currentOp);
+  if (JSON.stringify(currentOp.request) !== JSON.stringify(built.request)) clearBuildResult();
   currentOp.request = built.request;
   globalThis.tboxCurrentOperation = currentOp;
   if (!$("fallbackcard")?.classList.contains("hidden")) {
@@ -969,18 +1029,24 @@ async function checkStorageQuota(op = currentOp) {
 
 async function finishIsoSink(s, name) {
   await s.w.close();
-  if (s.kind !== "opfs") return;
+  if (s.kind !== "opfs") return { kind: "picker", status: "stream-closed" };
 
   const f = await s.fh.getFile();
 
   if (window.showSaveFilePicker) {
+    let h;
     try {
-      const h = await showSaveFilePicker({ suggestedName: name, types: [{ description: "ISO image", accept: { "application/x-iso9660-image": [".iso"] } }] });
+      h = await showSaveFilePicker({ suggestedName: name, types: [{ description: "ISO image", accept: { "application/x-iso9660-image": [".iso"] } }] });
+    } catch (e) {
+      // A cancelled save is not success. An unavailable picker (for example,
+      // lost transient activation after a long build) can still download.
+      if (e.name === "AbortError") throw e;
+      log("save picker unavailable; starting browser download: " + e);
+    }
+    if (h) {
       const w = await h.createWritable();
       await f.stream().pipeTo(w);
-      return;
-    } catch (e) {
-      if (e.name === "AbortError") return;
+      return { kind: "picker", status: "stream-closed" };
     }
   }
 
@@ -988,10 +1054,14 @@ async function finishIsoSink(s, name) {
   const a = Object.assign(document.createElement("a"), { href: url, download: name });
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 120_000);
+  // The page cannot observe persistence of an <a download>. The diagnostic
+  // collector independently saves and hashes its download before joining it.
+  return { kind: "download", status: "initiated" };
 }
 
 function prepareDdi(ch) {
   if (isOperationBusy()) return;
+  clearBuildResult();
   selectedDdi = ch;
   $("image").value = "";
   $("buildcard").classList.remove("hidden");
@@ -1004,6 +1074,7 @@ function prepareDdi(ch) {
 
 async function buildDdi(ch) {
   if (isOperationBusy()) return;
+  clearBuildResult();
   askNotify();
   const releaseLease = globalThis.tboxLayerCache?.acquireBuildLease?.(`ddi-${ch.id}`) || (() => {});
   setOperationBusy(true, "build");
@@ -1065,6 +1136,7 @@ async function buildDdi(ch) {
 async function build() {
   if (selectedDdi) return buildDdi(selectedDdi);
   if (isOperationBusy()) return;
+  clearBuildResult();
   updateShim();
   askNotify();
 
@@ -1083,6 +1155,9 @@ async function build() {
   $("build").disabled = true;
   $("postcard").classList.add("hidden");
   op.state = "building";
+  op.error = null;
+  const resultRevision = buildResultRevision;
+  op.buildAttempt = resultRevision;
 
   const label = req.options.label;
   let initrd = null;
@@ -1110,10 +1185,12 @@ async function build() {
     }
 
     const hasBuildStub =
-      typeof window.tboxBuildIso === "function" && window.tboxBuildIso !== wasmNativeBuildIso;
+      (typeof window.tboxBuildIso === "function" && window.tboxBuildIso !== wasmNativeBuildIso) ||
+      (typeof window.tboxBuildIsoWithResult === "function" && window.tboxBuildIsoWithResult !== wasmNativeBuildIsoWithResult);
     if (!hasBuildStub) {
       await window.loadWasm();
     }
+    observeEngineResets();
     if (op.inspectedVia === "catalog") {
       globalThis.tboxLayerCache?.setPrefetchEnabled?.(true);
       if (typeof window.tboxIntrospect === "function") {
@@ -1127,13 +1204,36 @@ async function build() {
     const flatpaks = req.options.flatpaks.slice();
     const packages = req.options.packages.slice();
     const extraRun = req.options.extraRun.slice();
-    const bytes = await window.tboxBuildIso(
+    const withResult = typeof window.tboxBuildIsoWithResult === "function";
+    const buildIso = withResult ? window.tboxBuildIsoWithResult : window.tboxBuildIso;
+    let writtenBytes = 0;
+    const result = await buildIso(
       { label, initrd, flatpaks, packages, extraRun, request: req },
-      (u8) => s.w.write(u8),
+      async (u8) => {
+        if (!(u8 instanceof Uint8Array) || !Number.isSafeInteger(writtenBytes + u8.byteLength)) {
+          throw new Error("invalid ISO sink byte count");
+        }
+        const size = u8.byteLength;
+        await s.w.write(u8);
+        writtenBytes += size;
+      },
     );
-    await finishIsoSink(s, name);
+    // Engine observations remain private until both engine output and the
+    // browser save/close complete. Never backfill them from the BuildRequest.
+    const pendingResult = withResult ? deepFreeze(tboxValidateBuildResult(result, writtenBytes)) : null;
+    const bytes = withResult ? pendingResult.bytesWritten : result;
+    if (!Number.isSafeInteger(bytes) || bytes <= 0 || bytes !== writtenBytes) {
+      throw new Error("invalid ISO build byte count");
+    }
+    const outputDelivery = await finishIsoSink(s, name);
+    while (pendingEngineResets.size) await Promise.allSettled([...pendingEngineResets]);
+    if (currentOp !== op || resultRevision !== buildResultRevision || !operationMatchesForm(op)) {
+      throw new Error("build selection changed before save completed");
+    }
     updatePostcardFilename(name);
     op.state = "completed";
+    op.buildResult = pendingResult;
+    op.outputDelivery = deepFreeze(outputDelivery);
     const dt = ((performance.now() - t0) / 1000).toFixed(1);
     $("stage").textContent = `Done — ${(bytes / 1e9).toFixed(2)} GB in ${dt}s.`;
     notify("ISO ready 🐟", `${(bytes / 1e9).toFixed(2)} GB written in ${dt}s`);
@@ -1143,6 +1243,8 @@ async function build() {
     if (s?.w?.abort) {
       await s.w.abort().catch(() => {});
     }
+    clearBuildResult();
+    op.buildResult = null;
     op.state = "failed";
     op.error = String(e);
     $("postcard").classList.add("hidden");
@@ -1223,6 +1325,7 @@ if ($("copyfallback")) {
 }
 for (const id of ["label", "initrdurl"]) {
   $(id)?.addEventListener("input", () => {
+    clearBuildResult();
     syncOperationOptions();
     updateShare();
   });
