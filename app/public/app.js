@@ -402,7 +402,7 @@ async function fpSearch(q) {
     fpHits = (Array.isArray(d.hits) ? d.hits : []).filter(hit =>
       hit && typeof hit.app_id === "string" && URL_FLATPAK_ID.test(hit.app_id)).slice(0, 8);
     fpRenderResults();
-    $("fpstatus").textContent = fpHits.length ? `${fpHits.length} apps found. Choose apps to include.` : "No apps found. Try another name.";
+    $("fpstatus").textContent = fpHits.length ? `${fpHits.length} app${fpHits.length === 1 ? "" : "s"} found. Choose apps to include.` : "No apps found. Try another name.";
   } catch (e) {
     if (version !== fpSearchVersion || e.name === "AbortError") return;
     $("fpstatus").textContent = "Flathub search is unavailable. Your selections are safe; try searching again later.";
@@ -633,6 +633,7 @@ function parseImage(raw) {
 const DESKTOPS = Object.fromEntries(BUILDER_CONFIG.desktops.map(d => [d.id, d]));
 const DDI_CHANNELS = BUILDER_CONFIG.ddi_channels || [];
 let selectedDdi = null;
+let selectionWasExplicit = false;
 let VARIANTS = globalThis.TboxBuilderConfig.variants(BUILDER_CONFIG, catalogSnapshot);
 
 const ALMA_VARIANTS = new Set(["yellowfin", "albacore"]);
@@ -1634,6 +1635,7 @@ function renderEditions() {
     b.onclick = () => {
       if (isOperationBusy()) return;
       selectedDdi = null;
+      selectionWasExplicit = true;
       $("image").value = `${v.id}:${de}`;
       syncEditionSelection();
       invalidateOperation("edition-selected");
@@ -1666,7 +1668,9 @@ function refreshConfiguredChoices() {
   const parsed = parseCuratedTunaRef($("image").value);
   if (parsed && previous) {
     const entry = findCatalogEntry(parsed.variant, parsed.flavor, currentPlatform());
-    if (!entry || !(entry.scheduled || entry.availability?.available) || !VARIANTS.some(v => v.id === parsed.variant && v.des.includes(parsed.flavor))) {
+    // Explicit platform choices may be unqualified/unscheduled but still have a
+    // catalog record and exact local fallback. Automatic defaults still need admission.
+    if (!entry || (!selectionWasExplicit && !(entry.scheduled || entry.availability?.available)) || !VARIANTS.some(v => v.id === parsed.variant && v.des.includes(parsed.flavor))) {
       $("image").value = "";
     }
   }
@@ -1676,6 +1680,7 @@ if ($("platform")) {
   $("platform").value = defaultPlatformForVariant($("variant").value);
   $("platform").addEventListener("change", () => {
     if (isOperationBusy()) return;
+    selectionWasExplicit = true;
     renderEditions();
     invalidateOperation("platform-changed");
     fpRender();
@@ -1684,6 +1689,7 @@ if ($("platform")) {
 }
 $("variant").addEventListener("change", () => {
   if (isOperationBusy()) return;
+  selectionWasExplicit = true;
   const vId = $("variant").value.replace(/^ddi:/, "");
   if ($("platform") && $("platform").value !== "linux/arm64") {
     $("platform").value = defaultPlatformForVariant(vId);
@@ -1706,6 +1712,7 @@ $("variant").addEventListener("change", () => {
 renderEditions();
 $("image").addEventListener("input", () => {
   if (isOperationBusy()) return;
+  selectionWasExplicit = true;
   if ($("image").value.trim()) selectedDdi = null;
   const parsed = parseCuratedTunaRef($("image").value);
   if (parsed && VARIANTS.some((v) => v.id === parsed.variant)) {
@@ -1754,16 +1761,19 @@ const URL_PACKAGE_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
   const urlPlatform = q.get("platform");
 
   if (urlVariant && VARIANTS.some((v) => v.id === urlVariant)) {
+    selectionWasExplicit = true;
     $("variant").value = urlVariant;
     if ($("platform")) {
       $("platform").value = defaultPlatformForVariant(urlVariant);
     }
   }
   if (urlPlatform && VALID_PLATFORMS.has(urlPlatform) && $("platform")) {
+    selectionWasExplicit = true;
     $("platform").value = urlPlatform;
   }
   if (q.get("image")) {
     if (urlImageUsesDefaultRegistry(q.get("image"))) {
+      selectionWasExplicit = true;
       $("image").value = q.get("image");
     } else {
       imageRejected = true;
@@ -1771,6 +1781,7 @@ const URL_PACKAGE_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
       log("Ignored ?image= from this link — it names a non-default registry, and supply-chain params are not applied from URLs (iso-builder#114, #167). Type it into the image field if that is intended.");
     }
   } else if (urlFlavor && /^[a-z0-9-]+$/.test(urlFlavor)) {
+    selectionWasExplicit = true;
     const vId = $("variant").value.replace(/^ddi:/, "");
     $("image").value = `${vId}:${urlFlavor}`;
   }

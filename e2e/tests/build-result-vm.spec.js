@@ -34,6 +34,7 @@ function app() {
   } };
   const context = {
     console, performance, Uint8Array, Blob, URL, Promise, WeakSet,
+    BUILDER_CONFIG: require("../../app/public/builder-config.js").validate(structuredClone(require("../../app/public/builder-config.json"))),
     location: { search: "" }, setTimeout: () => 0,
     document: { createElement: () => ({ click: () => { trace.downloads++; } }) },
     navigator: {}, $: element, currentOp: op, buildResultRevision: 0,
@@ -71,6 +72,11 @@ function expectFailed({ op, element }) {
 }
 
 test.describe("app result lifecycle VM", () => {
+  test("preview configuration blocks direct build before engine or sink actions", async () => {
+    const a = app(); a.c.BUILDER_CONFIG = { ...a.c.BUILDER_CONFIG, preview_only: true };
+    await a.c.build();
+    expect(a.trace.calls).toBe(0); expect(a.trace.closes).toBe(0); expect(a.trace.writes).toBe(0);
+  });
   test("keeps result private until successful close and exposes a frozen snapshot", async () => {
     const a = app(); const closed = deferred(); const closing = deferred();
     a.sink.w.close = async () => { closing.resolve(); await closed.promise; };
