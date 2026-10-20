@@ -1,6 +1,7 @@
 const {test,expect}=require('@playwright/test');
 test('fresh and unknown experiences default to deployment default',async({page})=>{
  await page.goto('/?experience=https://untrusted.example/config.json');await expect(page.locator('#experience')).toHaveValue('tunaos');await expect(page).toHaveTitle('TunaOS ISO Builder');
+ await expect(page.getByText('These requests are not yet applied to the live image or installed system.',{exact:false})).toBeVisible();
 });
 test('switching starts a clean preview setup and drops all prior URL overrides',async({page})=>{
  await page.goto('/?image=yellowfin:gnome&flatpaks=org.mozilla.firefox&label=OLD');
