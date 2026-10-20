@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "preview_only": true,
+  "brand": {
+    "name": "Bluefin",
+    "homepage_url": "https://projectbluefin.io/",
+    "documentation_url": "https://docs.projectbluefin.io/",
+    "disclaimer": "Unofficial Bluefin configuration demo. Not affiliated with or endorsed by Bluefin. Preview only; browser ISO creation and installation support are not qualified."
+  },
+  "presentation": {
+    "headline": "Explore a Bluefin image configuration",
+    "intro": "One shared ISO Builder, configured for a different project. Review the example image and defaults; use the official project for installation guidance.",
+    "accent_color": "#4285f4"
+  },
+  "output": {
+    "volume_label": "BLUEFIN_DEMO",
+    "filename_prefix": "bluefin-demo"
+  },
+  "desktops": [
+    {
+      "id": "gnome",
+      "name": "GNOME",
+      "description": "Example desktop metadata; not a hardware or installation qualification.",
+      "default_flatpaks": []
+    }
+  ],
+  "variants": [],
+  "default_selection": {
+    "kind": "image",
+    "image": "ghcr.io/projectbluefin/dakota:stable",
+    "platform": "linux/amd64"
+  },
+  "curated_app_sets": []
+}

@@ -64,6 +64,14 @@ func TestWebAndNativeCatalogLoadersPreserveVariantFlavorPlatformCoverage(t *test
 		t.Fatalf("read web loader: %v", err)
 	}
 
+	for _, file := range []string{"builder-config.js", "builder-config-data.js"} {
+		configJS, err := os.ReadFile("../app/public/" + file)
+		if err != nil {
+			t.Fatalf("read builder configuration: %v", err)
+		}
+		appJS = append(append(configJS, '\n'), appJS...)
+	}
+
 	script := `
 const fs = require("fs");
 const vm = require("vm");
@@ -80,6 +88,8 @@ function makeEl(id) {
     disabled: false,
     href: "",
     dataset: {},
+    selectedOptions: [],
+    setAttribute() {},
     style: {},
     children: [],
     classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },

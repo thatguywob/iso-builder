@@ -20,6 +20,56 @@
  * are character-checked before they reach the engine.
  */
 
+// Deployment-owned, validated presentation policy. Never fall back to another brand.
+let BUILDER_CONFIG;
+try {
+  BUILDER_CONFIG = globalThis.TboxBuilderConfig.validate(globalThis.TBOX_BUILDER_CONFIG);
+} catch (error) {
+  const main = document.querySelector?.("main");
+  if (main) { main.textContent = "This builder’s configuration is missing or invalid. Contact its maintainer."; main.setAttribute("role", "alert"); }
+  throw error;
+}
+function applyBuilderBranding() {
+  if (!document.querySelector) return; // the catalog parity VM has no visual DOM
+  const config = BUILDER_CONFIG, brand = config.brand;
+  document.title = `${brand.name} ISO Builder`;
+  const link = document.querySelector(".site-header .brand");
+  link.textContent = ""; link.href = brand.homepage_url;
+  if (brand.logo_url) {
+    const img = document.createElement("img"); img.src = brand.logo_url; img.alt = "";
+    link.appendChild(img);
+  }
+  link.appendChild(document.createTextNode(brand.name));
+  const favicon = document.querySelector('link[rel="icon"]');
+  if (brand.favicon_url) favicon.href = brand.favicon_url; else favicon.remove();
+  const nav = document.querySelector(".site-header nav"); nav.textContent = "";
+  for (const [name, url] of [["Home",brand.homepage_url],["Docs",brand.documentation_url],["Support",brand.support_url]]) {
+    if (!url) continue;
+    const a=document.createElement("a"); a.textContent=name; a.href=url; nav.appendChild(a);
+  }
+  document.querySelector("h1").textContent = config.presentation.headline;
+  document.querySelector("#builder-intro").textContent = config.presentation.intro;
+  const disclaimer=document.querySelector("#builder-disclaimer");
+  disclaimer.textContent=brand.disclaimer || ""; disclaimer.hidden=!brand.disclaimer;
+  document.querySelector("#label").value=config.output.volume_label;
+  if (!config.variants.length && !config.ddi_channels?.length) {
+    document.querySelector("#choose-heading").textContent="Review your image";
+    document.querySelector("#desktop-help").textContent="This deployment starts from a configured container image. Check its reference and computer type before continuing.";
+    document.querySelector("#variant").parentElement.hidden=true;
+  }
+  document.documentElement.style.setProperty("--accent",config.presentation.accent_color);
+  document.documentElement.style.setProperty("--accent-soft","var(--fg)");
+  const rgb=config.presentation.accent_color.slice(1).match(/../g).map(v=>parseInt(v,16)/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4);
+  const luminance=rgb[0]*.2126+rgb[1]*.7152+rgb[2]*.0722;
+  document.documentElement.style.setProperty("--accent-ink",luminance>.179?"#000":"#fff");
+  if(config.preview_only) {
+    document.querySelector("#introspect").disabled=true;
+    document.querySelector("#introspect").textContent="Preview only";
+    document.querySelector("#preview-note").textContent="This example does not inspect, download or build images.";
+  }
+}
+applyBuilderBranding();
+
 let SHIM = "https://relay.tunaos.org";
 
 function updateShim() {
@@ -67,6 +117,8 @@ function loadCatalogSnapshot() {
     .then((doc) => {
       if (doc && doc.schemaVersion === 1 && doc.kind === "catalog-snapshot" && Array.isArray(doc.targets)) {
         catalogSnapshot = doc;
+        refreshConfiguredChoices();
+        renderEditions();
       }
       return catalogSnapshot;
     })
@@ -79,6 +131,7 @@ globalThis.tboxSetCatalogSnapshot = (doc) => {
   if (doc && doc.schemaVersion === 1 && doc.kind === "catalog-snapshot" && Array.isArray(doc.targets)) {
     catalogSnapshot = doc;
     catalogSnapshotPromise = Promise.resolve(doc);
+    refreshConfiguredChoices();
     renderEditions();
     invalidateOperation("catalog-updated");
   }
@@ -89,33 +142,8 @@ globalThis.tboxSetCatalogSnapshot = (doc) => {
 // aurora/common, zirconium): every desktop ships the Bazaar store + a
 // browser; editors follow the desktop's family. The full upstream sets
 // are one pick away (see CURATED_SETS).
-const FLATPAK_DEFAULTS = {
-  gnome: ["io.github.kolunmi.Bazaar", "org.mozilla.firefox", "org.gnome.TextEditor"],
-  kde: ["io.github.kolunmi.Bazaar", "org.mozilla.firefox", "org.kde.kate"],
-  xfce: ["io.github.kolunmi.Bazaar", "org.mozilla.firefox", "org.gnome.TextEditor"],
-  cosmic: ["io.github.kolunmi.Bazaar", "org.mozilla.firefox"],
-  niri: ["io.github.kolunmi.Bazaar", "org.mozilla.firefox"],
-  none: [],
-};
-
-// Upstream curated sets, fetched live so they track upstream without
-// redeploys. `desktops` names the desktops each set is curated for: once
-// the image's desktop is known, the picker lists the matching sets first
-// and selects the first of them (iso-builder#192). Bluefin curates GNOME
-// apps, and the other GTK desktops (xfce, cosmic) sit closer to that set
-// than to Aurora's Qt one. Zirconium is the niri set.
-const BLUEFIN_BREW = "https://raw.githubusercontent.com/projectbluefin/common/main/system_files/bluefin/usr/share/ublue-os/homebrew/";
-const AURORA_BREW = "https://raw.githubusercontent.com/get-aurora-dev/common/main/system_files/shared/usr/share/ublue-os/homebrew/";
-const ZIRCONIUM_PREINSTALL = "https://raw.githubusercontent.com/zirconium-dev/zirconium/main/mkosi.extra/usr/share/flatpak/preinstall.d/zirconium.preinstall";
-const CURATED_SETS = [
-  { id: "bluefin-system", label: "Bluefin core apps", desktops: ["gnome", "xfce", "cosmic"], url: BLUEFIN_BREW + "system-flatpaks.Brewfile" },
-  { id: "bluefin-full", label: "Bluefin full desktop", desktops: ["gnome", "xfce", "cosmic"], url: BLUEFIN_BREW + "full-desktop.Brewfile" },
-  { id: "bluefin-dx", label: "Bluefin developer apps", desktops: ["gnome", "xfce", "cosmic"], url: BLUEFIN_BREW + "system-dx-flatpaks.Brewfile" },
-  { id: "aurora-system", label: "Aurora core apps", desktops: ["kde"], url: AURORA_BREW + "system-flatpaks.Brewfile" },
-  { id: "aurora-full", label: "Aurora full desktop", desktops: ["kde"], url: AURORA_BREW + "full-desktop.Brewfile" },
-  { id: "aurora-dx", label: "Aurora developer apps", desktops: ["kde"], url: AURORA_BREW + "system-dx-flatpaks.Brewfile" },
-  { id: "zirconium", label: "Zirconium apps", desktops: ["niri"], url: ZIRCONIUM_PREINSTALL },
-];
+const FLATPAK_DEFAULTS = Object.fromEntries(BUILDER_CONFIG.desktops.map(d => [d.id, d.default_flatpaks]));
+const CURATED_SETS = BUILDER_CONFIG.curated_app_sets;
 
 function parseCuratedSet(text) {
   const ids = [...text.matchAll(/^flatpak "([^"]+)"/gm)].map((m) => m[1]);
@@ -150,11 +178,14 @@ function renderCuratedSets(desktop) {
   } else {
     group("All sets", other);
   }
-  sel.value = (matched[0] || other[0]).id;
+  const first = matched[0] || other[0];
+  sel.value = first?.id || "";
+  if ($("curated")) $("curated").disabled = !first;
 }
 
 async function loadCuratedSet() {
   const set = CURATED_SETS.find((s) => s.id === $("curatedset").value) || CURATED_SETS[0];
+  if (!set) return;
   $("curated").disabled = true;
   try {
     const r = await fetch(set.url);
@@ -599,36 +630,14 @@ function parseImage(raw) {
 }
 
 // ── Image picker & unified BuildRequest v1 operation state ───────────────
-const DESKTOPS = {
-  gnome:  { name: "GNOME", description: "A clean, focused desktop with an app overview." },
-  kde:    { name: "KDE Plasma", description: "A familiar layout with a taskbar and lots of customization." },
-  cosmic: { name: "COSMIC", description: "Flexible workspaces with optional window tiling." },
-  niri:   { name: "Niri", description: "A scrolling, keyboard-focused window layout." },
-  xfce:   { name: "XFCE", description: "A lightweight, traditional desktop." },
-};
-
-const DDI_CHANNELS = [
-  { id: "snowfield", stem: "snowfield-ab", name: "Frostyard Snowfield — GNOME (DDI)", desktop: "gnome" },
-  { id: "snow",      stem: "snow-ab",      name: "Frostyard Snow — GNOME (DDI)",      desktop: "gnome" },
-  { id: "cayo",      stem: "cayo-ab",      name: "Frostyard Cayo — headless (DDI)",   desktop: "none" },
-];
+const DESKTOPS = Object.fromEntries(BUILDER_CONFIG.desktops.map(d => [d.id, d]));
+const DDI_CHANNELS = BUILDER_CONFIG.ddi_channels || [];
 let selectedDdi = null;
-
-const VARIANTS = [
-  { id: "yellowfin", name: "AlmaLinux Kitten 10 (flagship)", des: ["gnome", "kde", "cosmic", "niri", "xfce"] },
-  { id: "bonito",    name: "Fedora 44",                      des: ["gnome", "kde", "cosmic", "niri", "xfce"] },
-  { id: "sailfin",   name: "openSUSE Tumbleweed",            des: ["gnome", "kde", "cosmic", "niri", "xfce"] },
-  { id: "flounder",  name: "Debian 13 Trixie",               des: ["kde", "xfce"] },
-  { id: "grouper",   name: "Ubuntu 26.04",                   des: ["gnome", "kde", "cosmic", "xfce"] },
-  { id: "marlin",    name: "Arch Linux",                     des: ["gnome", "kde", "cosmic", "niri", "xfce"] },
-  { id: "skipjack",  name: "CentOS Stream 10",               des: ["gnome", "kde", "cosmic", "niri", "xfce"] },
-  { id: "albacore",  name: "AlmaLinux 10",                   des: ["gnome", "kde", "cosmic", "niri", "xfce"] },
-  { id: "guppy",     name: "Gentoo (source-based)",          des: ["kde", "xfce"] },
-];
+let VARIANTS = globalThis.TboxBuilderConfig.variants(BUILDER_CONFIG, catalogSnapshot);
 
 const ALMA_VARIANTS = new Set(["yellowfin", "albacore"]);
 const NATIVE_V3_VARIANTS = new Set(["skipjack", "wahoo"]);
-const VALID_PLATFORMS = new Set(["linux/amd64", "linux/amd64/v2", "linux/arm64"]);
+const VALID_PLATFORMS = new Set(["linux/amd64", "linux/amd64/v2", "linux/amd64/v3", "linux/arm64"]);
 
 function defaultPlatformForVariant(variantId) {
   return ALMA_VARIANTS.has(variantId) ? "linux/amd64/v2" : "linux/amd64";
@@ -645,6 +654,7 @@ function normalizePlatformForVariant(variantId, platform) {
 function cpuBaselineForTarget(variantId, platform) {
   if (platform === "linux/arm64") return "armv8-a";
   if (platform === "linux/amd64/v2") return "x86-64-v2";
+  if (platform === "linux/amd64/v3") return "x86-64-v3";
   if (NATIVE_V3_VARIANTS.has(variantId)) return "x86-64-v3";
   return "x86-64";
 }
@@ -662,7 +672,7 @@ function platformSlug(platform) {
 
 function currentPlatform() {
   const el = $("platform");
-  const vid = $("variant")?.value || "yellowfin";
+  const vid = $("variant")?.value || "";
   if (!el || !VALID_PLATFORMS.has(el.value)) {
     return defaultPlatformForVariant(vid.replace(/^ddi:/, ""));
   }
@@ -776,12 +786,16 @@ function isOperationBusy() {
   return Boolean(activeBusyPhase);
 }
 
+function syncInspectAction() {
+  $("introspect").disabled = BUILDER_CONFIG.preview_only || isOperationBusy() || (!$("image").value.trim() && !selectedDdi);
+}
 function setOperationBusy(busy, phase = null) {
   activeBusyPhase = busy ? (phase || "busy") : null;
   for (const id of ["variant", "platform", "image", "introspect", "clearcache"]) {
     const el = $(id);
-    if (el) el.disabled = Boolean(busy);
+    if (el) el.disabled = Boolean(busy) || (id === "introspect" && BUILDER_CONFIG.preview_only);
   }
+  syncInspectAction();
   const box = $("editions");
   if (box) {
     for (const btn of box.querySelectorAll("button.edition")) {
@@ -793,10 +807,10 @@ function setOperationBusy(busy, phase = null) {
 function buildRequestFromForm(existingOp = null) {
   updateShim();
   const rawInput = ($("image")?.value || "").trim();
-  const vSel = ($("variant")?.value || "yellowfin").replace(/^ddi:/, "");
-  const defaultRef = rawInput || `${vSel}:${(currentVariant()?.des?.[0] || "gnome")}`;
+  const vSel = ($("variant")?.value || "").replace(/^ddi:/, "");
+  const defaultRef = rawInput;
   const { registry, image } = parseImage(defaultRef);
-  const label = (($("label")?.value || "TUNAOS").toUpperCase().replace(/[^A-Z0-9_]/g, "_")) || "TUNAOS";
+  const label = (($("label")?.value || BUILDER_CONFIG.output.volume_label).toUpperCase().replace(/[^A-Z0-9_]/g, "_")) || BUILDER_CONFIG.output.volume_label;
   const flatpaks = fpCollect();
   const packages = pkgCollect();
   const extraRun = repoCmds.slice();
@@ -815,7 +829,7 @@ function buildRequestFromForm(existingOp = null) {
   let resolvedInputs = undefined;
   let qualification = { status: "unqualified", reason: "custom-image-unqualified" };
   let qualificationId = "";
-  let outputFilename = `tunaos-${(defaultRef.split("/").pop() || "image").replace(/[:/]/g, "-")}.iso`;
+  let outputFilename = `${BUILDER_CONFIG.output.filename_prefix}-${(defaultRef.split("/").pop() || "image").replace(/[:/]/g, "-")}.iso`;
 
   if (catalogEntry) {
     customImage = false;
@@ -840,7 +854,7 @@ function buildRequestFromForm(existingOp = null) {
     if (qualification.status === "qualified" && qualification.receiptDigest) {
       qualificationId = qualification.receiptDigest;
     }
-    outputFilename = `tunaos-${target.variant}-${target.flavor}-${platformSlug(target.platform)}.iso`;
+    outputFilename = `${BUILDER_CONFIG.output.filename_prefix}-${target.variant}-${target.flavor}-${platformSlug(target.platform)}.iso`;
   } else if (existingOp?.resolvedDigest) {
     resolvedInputs = {
       platformManifestDigest: existingOp.resolvedDigest,
@@ -1033,6 +1047,7 @@ function applyDetectedDesktopAndPackaging(fObj) {
 }
 
 async function inspect() {
+  if (BUILDER_CONFIG.preview_only) return;
   if (isOperationBusy()) return;
   selectedDdi = null; // inspecting an image ref is the OCI path
   updateShim();
@@ -1067,6 +1082,7 @@ async function inspect() {
 
     if (!hasTestStub) {
       await loadCatalogSnapshot();
+      if ($("image").value.trim() !== raw) throw new Error("The selected image is no longer available in this catalog. Choose an image again.");
       const refreshed = buildRequestFromForm(op);
       Object.assign(op, refreshed);
     }
@@ -1245,6 +1261,7 @@ async function finishIsoSink(s, name) {
 }
 
 function prepareDdi(ch) {
+  if (BUILDER_CONFIG.preview_only) return;
   if (isOperationBusy()) return;
   clearBuildResult();
   selectedDdi = ch;
@@ -1258,6 +1275,7 @@ function prepareDdi(ch) {
 }
 
 async function buildDdi(ch) {
+  if (BUILDER_CONFIG.preview_only) return;
   if (isOperationBusy()) return;
   clearBuildResult();
   askNotify();
@@ -1319,6 +1337,7 @@ async function buildDdi(ch) {
 }
 
 async function build() {
+  if (BUILDER_CONFIG.preview_only) return;
   if (selectedDdi) return buildDdi(selectedDdi);
   if (isOperationBusy()) return;
   clearBuildResult();
@@ -1360,7 +1379,7 @@ async function build() {
     } else {
       log("initramfs: auto (tbox overlay appended to the image's own initramfs)");
     }
-    const name = req.options.outputFilename || `tunaos-${($("image").value.split("/").pop() || "image").replace(/[:]/g, "-")}.iso`;
+    const name = req.options.outputFilename || `${BUILDER_CONFIG.output.filename_prefix}-${($("image").value.split("/").pop() || "image").replace(/[:]/g, "-")}.iso`;
     s = await isoSink(name);
     if (!s) {
       op.state = "ready";
@@ -1459,7 +1478,7 @@ function updateShare() {
   updateShim();
   const p = new URLSearchParams();
   if ($("image").value) p.set("image", $("image").value);
-  const vid = ($("variant")?.value || "yellowfin").replace(/^ddi:/, "");
+  const vid = ($("variant")?.value || "").replace(/^ddi:/, "");
   const plat = currentPlatform();
   if ($("image").value && plat !== defaultPlatformForVariant(vid)) {
     p.set("platform", plat);
@@ -1468,7 +1487,7 @@ function updateShare() {
   if (fl.length) p.set("flatpaks", fl.join(","));
   const pk = pkgCollect();
   if (pk.length) p.set("packages", pk.join(","));
-  if ($("label").value && $("label").value !== "TUNAOS") p.set("label", $("label").value);
+  if ($("label").value && $("label").value !== BUILDER_CONFIG.output.volume_label) p.set("label", $("label").value);
   if ($("initrdurl").value) p.set("initrd", $("initrdurl").value);
   if ($("shimurl").value && $("shimurl").value !== "https://relay.tunaos.org") p.set("shim", $("shimurl").value);
   const qs = "?" + p.toString();
@@ -1545,7 +1564,7 @@ $("fpsearch").addEventListener("input", (e) => {
 });
 
 function currentVariant() {
-  return VARIANTS.find((v) => v.id === $("variant").value) || VARIANTS[0];
+  return VARIANTS.find((v) => v.id === $("variant").value) || { id: "", name: "Custom image", des: [] };
 }
 function syncEditionSelection() {
   const box = $("editions");
@@ -1559,7 +1578,10 @@ function syncEditionSelection() {
     el.classList.toggle("selected", matches);
     el.setAttribute("aria-pressed", String(matches));
   }
-  if ($("selection-summary")) $("selection-summary").textContent = `${currentVariant().name} · ${$("platform").selectedOptions[0]?.textContent || currentPlatform()}`;
+  if ($("selection-summary")) $("selection-summary").textContent = val
+    ? `${currentVariant().name} · ${$("platform").selectedOptions?.[0]?.textContent || currentPlatform()}`
+    : "No image is selected. Choose a desktop or enter a custom image to continue.";
+  syncInspectAction();
 }
 function renderEditions() {
   const box = $("editions");
@@ -1572,7 +1594,8 @@ function renderEditions() {
     b.type = "button";
     b.className = "edition";
     b.dataset.de = ddi.desktop;
-    b.innerHTML = `${meta.name}<small>${ddi.id} · DDI</small>`;
+    b.textContent = meta.name;
+    const caption = document.createElement("small"); caption.textContent = `${ddi.id} · DDI`; b.appendChild(caption);
     b.onclick = () => {
       if (isOperationBusy()) return;
       selectedDdi = ddi;
@@ -1580,12 +1603,14 @@ function renderEditions() {
       invalidateOperation("ddi-selected");
       b.classList.add("selected");
       b.setAttribute("aria-pressed", "true");
+      syncInspectAction();
       updateShare();
     };
     b.classList.toggle("selected", selectedDdi?.id === ddi.id);
     b.setAttribute("aria-pressed", String(selectedDdi?.id === ddi.id));
     if ($("selection-summary")) $("selection-summary").textContent = ddi.name;
     box.appendChild(b);
+    syncInspectAction();
     return;
   }
   const v = currentVariant();
@@ -1602,7 +1627,10 @@ function renderEditions() {
     b.dataset.status = qualStatus;
     const subLabel = qualStatus === "qualified" ? "Browser build verified" :
       qualStatus === "unsupported" ? "Browser build not supported" : "Browser build not yet verified";
-    b.innerHTML = `${meta.name}<span class="desktop-description">${meta.description || ""}</span><small>${subLabel}</small>`;
+    b.textContent = meta.name;
+    const description=document.createElement("span"); description.className="desktop-description"; description.textContent=meta.description || "";
+    const caption=document.createElement("small"); caption.textContent=subLabel;
+    b.appendChild(description); b.appendChild(caption);
     b.onclick = () => {
       if (isOperationBusy()) return;
       selectedDdi = null;
@@ -1616,18 +1644,34 @@ function renderEditions() {
   syncEditionSelection();
 }
 
-for (const v of VARIANTS) {
-  const o = document.createElement("option");
-  o.value = v.id;
-  o.textContent = v.name;
-  $("variant").appendChild(o);
+function refreshConfiguredChoices() {
+  const picker = $("variant");
+  const previous = picker.value;
+  VARIANTS = globalThis.TboxBuilderConfig.variants(BUILDER_CONFIG, catalogSnapshot);
+  picker.innerHTML = "";
+  for (const v of VARIANTS) {
+    const o = document.createElement("option");
+    o.value = v.id;
+    o.textContent = v.name;
+    $("variant").appendChild(o);
+  }
+  for (const c of DDI_CHANNELS) {
+    const o = document.createElement("option");
+    o.value = `ddi:${c.id}`;
+    o.textContent = c.name;
+    $("variant").appendChild(o);
+  }
+  if (previous && (VARIANTS.some(v => v.id === previous) || DDI_CHANNELS.some(c => `ddi:${c.id}` === previous))) picker.value = previous;
+  else if (previous) { picker.value = ""; }
+  const parsed = parseCuratedTunaRef($("image").value);
+  if (parsed && previous) {
+    const entry = findCatalogEntry(parsed.variant, parsed.flavor, currentPlatform());
+    if (!entry || !(entry.scheduled || entry.availability?.available) || !VARIANTS.some(v => v.id === parsed.variant && v.des.includes(parsed.flavor))) {
+      $("image").value = "";
+    }
+  }
 }
-for (const c of DDI_CHANNELS) {
-  const o = document.createElement("option");
-  o.value = `ddi:${c.id}`;
-  o.textContent = c.name;
-  $("variant").appendChild(o);
-}
+refreshConfiguredChoices();
 if ($("platform")) {
   $("platform").value = defaultPlatformForVariant($("variant").value);
   $("platform").addEventListener("change", () => {
@@ -1693,6 +1737,17 @@ const URL_PACKAGE_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
 // Apply URL params.
 {
   const q = new URLSearchParams(location.search);
+  const configured = BUILDER_CONFIG.default_selection;
+  if (configured.kind === "image") {
+    $("image").value=configured.image;
+    $("platform").value=configured.platform;
+    const custom=document.querySelector?.("#custom-image-options"); if(custom) custom.open=true;
+  } else {
+    const entry=findCatalogEntry(configured.variant,configured.flavor,configured.platform);
+    const admitted=entry && (entry.scheduled || entry.availability?.available) && VARIANTS.find(v=>v.id===configured.variant && v.des.includes(configured.flavor));
+    if(admitted) { $("variant").value=admitted.id; $("image").value=`${admitted.id}:${configured.flavor}`; $("platform").value=configured.platform; }
+    else if($("selection-summary")) $("selection-summary").textContent="The configured default is not available in this catalog. Choose an image to continue.";
+  }
   let imageRejected = false;
   const urlVariant = q.get("variant");
   const urlFlavor = q.get("flavor") || q.get("de");
@@ -1712,6 +1767,7 @@ const URL_PACKAGE_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
       $("image").value = q.get("image");
     } else {
       imageRejected = true;
+      $("image").value = "";
       log("Ignored ?image= from this link — it names a non-default registry, and supply-chain params are not applied from URLs (iso-builder#114, #167). Type it into the image field if that is intended.");
     }
   } else if (urlFlavor && /^[a-z0-9-]+$/.test(urlFlavor)) {
@@ -1730,9 +1786,6 @@ const URL_PACKAGE_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
   if (SUPPLY_CHAIN_PARAMS.some((k) => q.get(k))) {
     log("Ignored ?shim=/?initrd= from this link — supply-chain params are not applied from URLs (iso-builder#114). Set them manually if intended.");
   }
-  if (!$("image").value && !imageRejected && !q.has("ddi")) {
-    $("image").value = `${$("variant").value}:${currentVariant().des[0]}`;
-  }
   const parsedImg = parseCuratedTunaRef($("image").value);
   if (parsedImg && VARIANTS.some((v) => v.id === parsedImg.variant)) {
     $("variant").value = parsedImg.variant;
@@ -1747,7 +1800,7 @@ const URL_PACKAGE_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
   updateShare();
 
   const autorunAllowed =
-    q.get("autorun") === "1" && !SUPPLY_CHAIN_PARAMS.some((k) => q.get(k)) && !imageRejected;
+    !BUILDER_CONFIG.preview_only && q.get("autorun") === "1" && !SUPPLY_CHAIN_PARAMS.some((k) => q.get(k)) && !imageRejected;
   if ($("image").value && autorunAllowed) inspect();
   const dch = DDI_CHANNELS.find((c) => c.id === q.get("ddi"));
   if (dch) {

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TunaOS ISO Builder</title>
-<link rel="icon" type="image/png" href="favicon-32.png">
+<title>ISO Builder</title>
+<link rel="icon" type="image/png" href="data:,">
 <style>
   /* Palette and type shared with tunaos.org (src/css/custom.css and
      src/css/page.module.css there). The two sites sit behind one nav bar and
@@ -55,10 +55,10 @@
   .row { display: flex; gap: .75rem; flex-wrap: wrap; align-items: end; }
   .row > div { flex: 1 1 220px; }
 
-  button { padding: .6rem 1.2rem; border-radius: 6px; border: none; background: var(--accent); color: #1d1f21;
+  button { padding: .6rem 1.2rem; border-radius: 6px; border: none; background: var(--accent); color: var(--accent-ink, #1d1f21);
     font: inherit; font-weight: 700; font-size: .88rem; cursor: pointer;
     transition: background .18s ease, transform .18s ease; }
-  button:hover:not(:disabled) { background: var(--accent-soft); }
+  button:hover:not(:disabled) { filter: brightness(1.12); }
   button:disabled { opacity: .45; cursor: default; }
   button.secondary { background: var(--panel-2); color: var(--fg); }
   button.secondary:hover { background: var(--bg-2); }
@@ -177,29 +177,20 @@
 <body>
 <header class="site-header">
   <div class="inner">
-    <a class="brand" href="https://tunaos.org" style="display:flex;align-items:center;gap:.55rem">
-      <img src="logo.png" alt="TunaOS"> TunaOS
-    </a>
-    <nav>
-      <a href="https://tunaos.org/download">Download</a>
-      <a href="https://iso.tunaos.org" class="active">ISO Builder</a>
-      <a href="https://tunaos.org/wootc">From Windows</a>
-      <a href="https://tunaos.org/flatpak">Flatpaks</a>
-      <a href="https://tunaos.org/docs/iso-builder">Docs</a>
-      <a href="https://github.com/tuna-os">GitHub</a>
-    </nav>
+    <a class="brand" style="display:flex;align-items:center;gap:.55rem"></a>
+    <nav aria-label="Project links"></nav>
   </div>
 </header>
 <main>
   <span class="eyebrow">ISO builder</span>
-  <h1>Make TunaOS your own</h1>
-  <p class="sub">Choose your desktop, add the apps you want, and create a USB-ready image.
-    Your image is assembled on this computer, without uploading your files.</p>
+  <h1>Make your own image</h1>
+  <p id="builder-intro" class="sub"></p>
+  <p id="builder-disclaimer" class="note" hidden></p>
   <ol class="journey" aria-label="Build steps"><li>1. Choose a desktop</li><li>2. Add apps <span>(optional)</span></li><li>3. Check &amp; build</li></ol>
 
   <section class="card" aria-labelledby="choose-heading">
     <h2 id="choose-heading">Choose your desktop</h2>
-    <p class="helper">The desktop is how your computer looks and feels. GNOME is selected to get you started. This is a desktop choice, not a guarantee that a browser build is available.</p>
+    <p id="desktop-help" class="helper">The desktop is how your computer looks and feels. Choose the layout you prefer. Your selection does not guarantee that a browser build is available.</p>
     <details id="base-options"><summary>Change Linux base or computer type</summary>
     <div class="row" style="align-items:end">
       <div>
@@ -209,6 +200,7 @@
       <div style="flex:0 0 220px">
         <label for="platform">Computer type</label>
         <select id="platform" class="variant-select" aria-label="Target platform">
+          <option value="linux/amd64/v3">Intel / AMD (x86-64-v3)</option>
           <option value="linux/amd64/v2">Intel / AMD (x86-64-v2)</option>
           <option value="linux/amd64">Intel / AMD (x86-64)</option>
           <option value="linux/arm64">ARM (aarch64)</option>
@@ -218,12 +210,12 @@
     </details>
     <p id="selection-summary" class="helper"></p>
     <div class="editions" id="editions" role="group" aria-label="Desktop choices"></div>
-    <details>
+    <details id="custom-image-options">
       <summary>Use a custom container image</summary>
       <div class="row" style="margin-top:.6rem">
         <div>
           <label for="image">Bootable container image</label>
-          <input type="text" id="image" placeholder="tuna-os/yellowfin:kde" spellcheck="false">
+          <input type="text" id="image" placeholder="registry.example.org/project/image:tag" spellcheck="false">
         </div>
 
       </div>
@@ -253,7 +245,7 @@
     <details id="advanced-options"><summary>Advanced settings</summary>
       <p class="helper">The defaults work for most people. Only change these if you need a specific system setup.</p>
       <label for="label">USB image name</label>
-      <input type="text" id="label" value="TUNAOS" spellcheck="false">
+      <input type="text" id="label" value="" spellcheck="false">
       <details><summary>Add system packages</summary>
       <label style="margin-top:1rem">System packages (layered on the installed system via <a href="https://github.com/tuna-os/remora" target="_blank" rel="noopener">remora</a> — persists across updates)</label>
       <div id="pkglist" class="fplist"></div>
@@ -293,7 +285,7 @@
       </div>
       </details>
     </details>
-    <div class="next-action"><button id="introspect">Check image &amp; continue</button><p class="helper">No ISO download starts yet.</p></div>
+    <div class="next-action"><button id="introspect">Check image &amp; continue</button><p id="preview-note" class="helper">No ISO download starts yet.</p></div>
   </section>
 
   <div class="card hidden" id="buildcard">
@@ -327,7 +319,7 @@
 
   <div class="card hidden" id="postcard">
     <h3 style="margin-top:0">ISO build complete</h3>
-    <p class="sub" style="margin-top:-.4rem;margin-bottom:1rem">Your custom TunaOS ISO is ready. Now you need to write it to a USB drive to make it bootable.</p>
+    <p class="sub" style="margin-top:-.4rem;margin-bottom:1rem">Your custom ISO is ready. Now you need to write it to a USB drive to make it bootable.</p>
     
     <div class="tabs">
       <button class="tab-btn active" onclick="switchTab(event, 'etcher')">BalenaEtcher</button>
@@ -340,7 +332,7 @@
       <ol style="padding-left:1.2rem;margin:0">
         <li>Download and install <a href="https://etcher.balena.io/" target="_blank" rel="noopener">BalenaEtcher</a> (supports Windows, macOS, and Linux).</li>
         <li>Plug in your USB flash drive (minimum 4GB).</li>
-        <li>Open Etcher, click <b>Flash from file</b> and select your downloaded TunaOS ISO.</li>
+        <li>Open Etcher, click <b>Flash from file</b> and select your downloaded ISO.</li>
         <li>Select your USB target and click <b>Flash!</b>.</li>
       </ol>
     </div>
@@ -349,7 +341,7 @@
       <ol style="padding-left:1.2rem;margin:0">
         <li>Install <a href="https://www.ventoy.net/" target="_blank" rel="noopener">Ventoy</a> onto your USB flash drive (non-destructive; you only do this once).</li>
         <li>Once Ventoy is installed, your USB drive will show up as a normal partition named <code>Ventoy</code>.</li>
-        <li>Simply <b>drag and drop</b> your downloaded TunaOS ISO file directly onto the USB partition.</li>
+        <li>Simply <b>drag and drop</b> your downloaded ISO file directly onto the USB partition.</li>
         <li>Reboot your PC, boot from the USB drive, and choose the ISO from the Ventoy menu.</li>
       </ol>
     </div>
@@ -358,7 +350,7 @@
       <ol style="padding-left:1.2rem;margin:0">
         <li>Download and open <a href="https://rufus.ie/" target="_blank" rel="noopener">Rufus</a> (Windows only).</li>
         <li>Select your USB drive under <b>Device</b>.</li>
-        <li>Click <b>SELECT</b> and choose your downloaded TunaOS ISO.</li>
+        <li>Click <b>SELECT</b> and choose your downloaded ISO.</li>
         <li>Keep default settings (GPT, UEFI) and click <b>START</b>.</li>
         <li>If prompted for write mode, select <b>Write in ISO Image mode</b>.</li>
       </ol>
@@ -369,7 +361,7 @@
       <ol style="padding-left:1.2rem;margin:0">
         <li>Identify your USB drive name (e.g. <code>/dev/sdX</code> on Linux, <code>/dev/diskN</code> on macOS).</li>
         <li>Run the following command in your terminal:
-          <pre style="padding:.6rem;overflow-x:auto;margin:.4rem 0;font:12px var(--mono)"><code>sudo dd if=path/to/tunaos.iso of=/dev/sdX bs=4M status=progress oflag=sync</code></pre>
+          <pre style="padding:.6rem;overflow-x:auto;margin:.4rem 0;font:12px var(--mono)"><code>sudo dd if=path/to/image.iso of=/dev/sdX bs=4M status=progress oflag=sync</code></pre>
         </li>
         <li>Wait for the write command to complete and safely eject the drive.</li>
       </ol>
@@ -384,6 +376,8 @@
 <script src="wasm_exec.js"></script>
 <script src="layercache.js"></script>
 <script src="build-result.js"></script>
+<script src="builder-config.js"></script>
+<script src="builder-config-data.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
