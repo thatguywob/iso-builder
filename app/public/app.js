@@ -185,16 +185,75 @@ function notify(title, body) {
 }
 
 // ── Flatpak checklist + Flathub search ──────────────────────────────────
-const fpItems = new Map(); // appId -> { checked, name }
+const fpItems = new Map(); // appId -> { checked, name, summary, icon, arches }
+let fpSearchVersion = 0;
+let fpSearchController = null;
+let fpHits = [];
 
-function fpAdd(id, name = "", checked = true) {
-  if (!fpItems.has(id)) fpItems.set(id, { checked, name });
-  else fpItems.get(id).checked = checked;
+function fpMetadata(hit = {}) {
+  let icon = "";
+  try {
+    const url = new URL(hit.icon);
+    if (url.protocol === "https:" && ["dl.flathub.org", "flathub.org"].includes(url.hostname)
+        && !url.username && !url.password) icon = url.href;
+  } catch {}
+  return {
+    name: typeof hit.name === "string" ? hit.name : "",
+    summary: typeof hit.summary === "string" ? hit.summary : "",
+    icon,
+    arches: Array.isArray(hit.arches) ? hit.arches.filter(a => typeof a === "string") : null,
+  };
+}
+
+function fpAdd(id, name = "", checked = true, metadata = {}) {
+  if (!fpItems.has(id)) fpItems.set(id, { checked, ...fpMetadata({ ...metadata, name }) });
+  else {
+    const item = fpItems.get(id);
+    item.checked = checked;
+    if (name) Object.assign(item, fpMetadata({ ...metadata, name }));
+  }
   fpRender();
 }
 
 function fpCollect() {
   return [...fpItems.entries()].filter(([, v]) => v.checked).map(([k]) => k);
+}
+
+function fpCardContent(parent, id, item, selected) {
+  const fallback = document.createElement("span");
+  fallback.className = "app-icon app-icon-fallback";
+  fallback.textContent = "▦";
+  fallback.setAttribute("aria-hidden", "true");
+  if (item.icon) {
+    const img = document.createElement("img");
+    img.className = "app-icon";
+    img.alt = "";
+    img.loading = "lazy";
+    img.referrerPolicy = "no-referrer";
+    img.src = item.icon;
+    img.onerror = () => img.replaceWith(fallback);
+    parent.appendChild(img);
+  } else parent.appendChild(fallback);
+  const copy = document.createElement("span");
+  copy.className = "app-copy";
+  for (const [tag, className, text] of [
+    ["strong", "", item.name || id],
+    ["span", "app-summary", item.summary || "App details have not been loaded."],
+    ["small", "", `Flathub · ${id}`],
+    ["span", "app-state", selected ? "Selected" : "Add app"],
+  ]) {
+    const el = document.createElement(tag);
+    el.className = className;
+    el.textContent = text;
+    copy.appendChild(el);
+  }
+  const arch = currentPlatform() === "linux/arm64" ? "aarch64" : "x86_64";
+  const availability = document.createElement("small");
+  availability.textContent = item.arches
+    ? (item.arches.includes(arch) ? `Listed for ${arch}` : `Not listed for ${arch}`)
+    : "Computer compatibility not checked";
+  copy.appendChild(availability);
+  parent.appendChild(copy);
 }
 
 function fpRender() {
@@ -203,46 +262,119 @@ function fpRender() {
   box.innerHTML = "";
   for (const [id, v] of fpItems) {
     const label = document.createElement("label");
+    label.className = "app-card";
+    label.dataset.appId = id;
     const cb = Object.assign(document.createElement("input"), { type: "checkbox", checked: v.checked });
-    cb.onchange = () => { v.checked = cb.checked; syncOperationOptions(); updateShare(); };
+    cb.setAttribute("aria-label", `Include ${v.name || id}`);
+    cb.onchange = () => {
+      v.checked = cb.checked;
+      label.querySelector(".app-state").textContent = v.checked ? "Selected" : "Not selected";
+      fpUpdateCount(); fpRenderResults(); syncOperationOptions(); updateShare();
+    };
     label.appendChild(cb);
-    const span = document.createElement("span");
-    span.textContent = v.name || id;
-    label.appendChild(span);
-    if (v.name) {
-      const code = document.createElement("code");
-      code.textContent = id;
-      label.appendChild(code);
-    }
+    fpCardContent(label, id, v, v.checked);
+    if (!v.checked) label.querySelector(".app-state").textContent = "Not selected";
     box.appendChild(label);
   }
+  fpUpdateCount();
+  fpRenderResults();
   syncOperationOptions();
   updateShare();
+  if ($("apps-options")?.open) fpHydrateSelected();
+}
+const fpMetadataAttempted = new Set();
+let fpHydrating = false;
+async function fpHydrateSelected() {
+  if (fpHydrating) return;
+  fpHydrating = true;
+  updateShim();
+  const relay = SHIM;
+  const worker = async () => {
+    while ($("apps-options")?.open) {
+      const id = [...fpItems.keys()].find(id => !fpItems.get(id).name && !fpMetadataAttempted.has(id));
+      if (!id) break;
+      fpMetadataAttempted.add(id);
+      try {
+        const r = await fetch(relay + "/flathub/search", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: id, filters: [] }),
+        });
+        if (!r.ok) continue;
+        const data = await r.json();
+        const hit = Array.isArray(data.hits) && data.hits.find(hit => hit && hit.app_id === id);
+        if (!hit || !fpItems.has(id)) continue;
+        Object.assign(fpItems.get(id), fpMetadata(hit));
+        // Preserve focused checkbox nodes when metadata arrives.
+        const label = [...$("fplist").children].find(el => el.dataset.appId === id);
+        if (label) {
+          for (const el of [...label.children].slice(1)) el.remove();
+          const item = fpItems.get(id);
+          label.querySelector("input").setAttribute("aria-label", `Include ${item.name || id}`);
+          fpCardContent(label, id, item, item.checked);
+          if (!item.checked) label.querySelector(".app-state").textContent = "Not selected";
+        }
+      } catch { /* Keep the ID and explicit unknown metadata state. */ }
+    }
+  };
+  try { await Promise.all([worker(), worker(), worker()]); }
+  finally { fpHydrating = false; }
+}
+function fpUpdateCount() {
+  const count = fpCollect().length;
+  if ($("fpcount")) $("fpcount").textContent = `${count} selected`;
+  if ($("fpempty")) $("fpempty").hidden = fpItems.size > 0;
+}
+function fpRenderResults() {
+  const box = $("fpresults");
+  box.innerHTML = "";
+  for (const hit of fpHits) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "app-card";
+    const selected = Boolean(fpItems.get(hit.app_id)?.checked);
+    b.setAttribute("aria-pressed", String(selected));
+    b.setAttribute("aria-label", `${selected ? "Remove" : "Add"} ${hit.name || hit.app_id}`);
+    fpCardContent(b, hit.app_id, fpMetadata(hit), selected);
+    b.onclick = () => {
+      fpAdd(hit.app_id, hit.name, !selected, hit);
+      // Keep the search and keyboard position so several apps can be chosen.
+      [...box.children].find(el => el.dataset.appId === hit.app_id)?.focus();
+    };
+    b.dataset.appId = hit.app_id;
+    box.appendChild(b);
+  }
 }
 
 let fpTimer = null;
 async function fpSearch(q) {
+  const version = ++fpSearchVersion;
+  fpSearchController?.abort();
+  fpSearchController = new AbortController();
   updateShim();
-  if (!q || q.length < 3) { $("fpresults").innerHTML = ""; return; }
+  fpHits = [];
+  fpRenderResults();
+  if (!q || q.length < 3) {
+    $("fpstatus").textContent = "Type at least 3 characters to search.";
+    return;
+  }
+  $("fpstatus").textContent = "Searching Flathub…";
   try {
     const r = await fetch(SHIM + "/flathub/search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query: q, filters: [] }),
+      signal: fpSearchController.signal,
     });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
-    const box = $("fpresults");
-    box.innerHTML = "";
-    for (const hit of (d.hits || []).slice(0, 6)) {
-      if (fpItems.has(hit.app_id) && fpItems.get(hit.app_id).checked) continue;
-      const b = document.createElement("button");
-      b.type = "button";
-      b.textContent = `+ ${hit.name} — ${hit.app_id}`;
-      b.onclick = () => { fpAdd(hit.app_id, hit.name); $("fpresults").innerHTML = ""; $("fpsearch").value = ""; };
-      box.appendChild(b);
-    }
-  } catch {
-    $("fpresults").innerHTML = "<span style='font-size:.8rem;color:var(--dim)'>Flathub search unavailable</span>";
+    if (version !== fpSearchVersion || $("fpsearch").value.trim() !== q) return;
+    fpHits = (Array.isArray(d.hits) ? d.hits : []).filter(hit =>
+      hit && typeof hit.app_id === "string" && URL_FLATPAK_ID.test(hit.app_id)).slice(0, 8);
+    fpRenderResults();
+    $("fpstatus").textContent = fpHits.length ? `${fpHits.length} apps found. Choose apps to include.` : "No apps found. Try another name.";
+  } catch (e) {
+    if (version !== fpSearchVersion || e.name === "AbortError") return;
+    $("fpstatus").textContent = "Flathub search is unavailable. Your selections are safe; try searching again later.";
   }
 }
 const log = (m) => {
@@ -468,11 +600,11 @@ function parseImage(raw) {
 
 // ── Image picker & unified BuildRequest v1 operation state ───────────────
 const DESKTOPS = {
-  gnome:  { name: "GNOME" },
-  kde:    { name: "KDE Plasma" },
-  cosmic: { name: "COSMIC" },
-  niri:   { name: "Niri" },
-  xfce:   { name: "XFCE" },
+  gnome:  { name: "GNOME", description: "A clean, focused desktop with an app overview." },
+  kde:    { name: "KDE Plasma", description: "A familiar layout with a taskbar and lots of customization." },
+  cosmic: { name: "COSMIC", description: "Flexible workspaces with optional window tiling." },
+  niri:   { name: "Niri", description: "A scrolling, keyboard-focused window layout." },
+  xfce:   { name: "XFCE", description: "A lightweight, traditional desktop." },
 };
 
 const DDI_CHANNELS = [
@@ -1344,7 +1476,22 @@ function updateShare() {
   $("sharelink").href = location.origin + location.pathname + qs;
 }
 
-$("introspect").onclick = inspect;
+$("introspect").onclick = async () => {
+  if (isOperationBusy()) return;
+  const ddi = DDI_CHANNELS.find(c => `ddi:${c.id}` === $("variant").value);
+  if (ddi && selectedDdi) prepareDdi(ddi);
+  else await inspect();
+  if (!$("buildcard").classList.contains("hidden")) {
+    $("stage").focus();
+  }
+};
+$("apps-options")?.addEventListener("toggle", () => {
+  if ($("apps-options").open) {
+    // A new visit to Apps is a bounded retry for metadata that was unavailable.
+    for (const [id, item] of fpItems) if (!item.name) fpMetadataAttempted.delete(id);
+    fpHydrateSelected();
+  }
+});
 $("build").onclick = build;
 $("curated").onclick = loadCuratedSet;
 renderCuratedSets(null);
@@ -1389,6 +1536,11 @@ $("shimurl")?.addEventListener("input", () => {
 });
 $("fpsearch").addEventListener("input", (e) => {
   clearTimeout(fpTimer);
+  // Invalidate an in-flight response immediately, including the debounce interval.
+  ++fpSearchVersion;
+  fpSearchController?.abort();
+  fpHits = [];
+  fpRenderResults();
   fpTimer = setTimeout(() => fpSearch(e.target.value.trim()), 300);
 });
 
@@ -1405,7 +1557,9 @@ function syncEditionSelection() {
       ? parsed.variant === $("variant").value && parsed.flavor === el.dataset.de
       : val === `${$("variant").value}:${el.dataset.de}`;
     el.classList.toggle("selected", matches);
+    el.setAttribute("aria-pressed", String(matches));
   }
+  if ($("selection-summary")) $("selection-summary").textContent = `${currentVariant().name} · ${$("platform").selectedOptions[0]?.textContent || currentPlatform()}`;
 }
 function renderEditions() {
   const box = $("editions");
@@ -1421,9 +1575,16 @@ function renderEditions() {
     b.innerHTML = `${meta.name}<small>${ddi.id} · DDI</small>`;
     b.onclick = () => {
       if (isOperationBusy()) return;
-      prepareDdi(ddi);
+      selectedDdi = ddi;
+      $("image").value = "";
+      invalidateOperation("ddi-selected");
       b.classList.add("selected");
+      b.setAttribute("aria-pressed", "true");
+      updateShare();
     };
+    b.classList.toggle("selected", selectedDdi?.id === ddi.id);
+    b.setAttribute("aria-pressed", String(selectedDdi?.id === ddi.id));
+    if ($("selection-summary")) $("selection-summary").textContent = ddi.name;
     box.appendChild(b);
     return;
   }
@@ -1439,8 +1600,9 @@ function renderEditions() {
     b.dataset.de = de;
     b.dataset.platform = plat;
     b.dataset.status = qualStatus;
-    const subLabel = qualStatus === "qualified" ? v.id : `${v.id} · ${qualStatus}`;
-    b.innerHTML = `${meta.name}<small>${subLabel}</small>`;
+    const subLabel = qualStatus === "qualified" ? "Browser build verified" :
+      qualStatus === "unsupported" ? "Browser build not supported" : "Browser build not yet verified";
+    b.innerHTML = `${meta.name}<span class="desktop-description">${meta.description || ""}</span><small>${subLabel}</small>`;
     b.onclick = () => {
       if (isOperationBusy()) return;
       selectedDdi = null;
@@ -1448,7 +1610,6 @@ function renderEditions() {
       syncEditionSelection();
       invalidateOperation("edition-selected");
       updateShare();
-      inspect();
     };
     box.appendChild(b);
   }
@@ -1473,6 +1634,7 @@ if ($("platform")) {
     if (isOperationBusy()) return;
     renderEditions();
     invalidateOperation("platform-changed");
+    fpRender();
     updateShare();
   });
 }
@@ -1482,7 +1644,18 @@ $("variant").addEventListener("change", () => {
   if ($("platform") && $("platform").value !== "linux/arm64") {
     $("platform").value = defaultPlatformForVariant(vId);
   }
+  const previous = parseCuratedTunaRef($("image").value);
+  if (!$("variant").value.startsWith("ddi:")) {
+    selectedDdi = null;
+    const variant = currentVariant();
+    const flavor = variant.des.includes(previous?.flavor) ? previous.flavor : variant.des[0];
+    $("image").value = `${variant.id}:${flavor}`;
+  } else {
+    selectedDdi = DDI_CHANNELS.find(c => `ddi:${c.id}` === $("variant").value);
+    $("image").value = "";
+  }
   renderEditions();
+  fpRender();
   invalidateOperation("variant-changed");
   updateShare();
 });
@@ -1556,6 +1729,9 @@ const URL_PACKAGE_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
   if (q.get("label")) $("label").value = q.get("label");
   if (SUPPLY_CHAIN_PARAMS.some((k) => q.get(k))) {
     log("Ignored ?shim=/?initrd= from this link — supply-chain params are not applied from URLs (iso-builder#114). Set them manually if intended.");
+  }
+  if (!$("image").value && !imageRejected && !q.has("ddi")) {
+    $("image").value = `${$("variant").value}:${currentVariant().des[0]}`;
   }
   const parsedImg = parseCuratedTunaRef($("image").value);
   if (parsedImg && VARIANTS.some((v) => v.id === parsedImg.variant)) {

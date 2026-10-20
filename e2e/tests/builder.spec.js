@@ -76,7 +76,7 @@ const slug = (ref) => ref.replace(/^.*\//, "").replace(/[^a-zA-Z0-9]+/g, "-");
 // Keep the real catalog loader and layer cache in these tests. Only build-engine
 // calls and the file-picker boundary are replaced for small, deterministic builds.
 async function inspectPreset(page) {
-  await page.getByText("Or build from any bootable container image").click();
+  await page.getByText("Use a custom container image").click();
   await page.locator("#introspect").click();
 }
 
@@ -85,7 +85,7 @@ test.describe("iso builder", () => {
     await page.goto("/");
     await expect(page).toHaveTitle(/TunaOS ISO Builder/);
     // Primary path is the picker: a base-variant dropdown + desktop chips.
-    await expect(page.locator("#variant")).toBeVisible();
+    await expect(page.locator("#variant")).toBeHidden();
     await expect(page.locator("#editions .edition")).not.toHaveCount(0);
     await shot(page, "01-home.png");
   });
@@ -94,12 +94,15 @@ test.describe("iso builder", () => {
     await page.goto("/");
     // Selecting a base re-renders its desktop chips; clicking one sets the
     // image ref as <variant>:<desktop> — the zero-typing default flow.
+    await page.locator("#base-options > summary").click();
     await page.locator("#variant").selectOption("bonito");
     const chip = page.locator('#editions .edition[data-de="kde"]');
     await expect(chip).toBeVisible();
     await chip.click();
     await expect(page.locator("#image")).toHaveValue("bonito:kde");
     await expect(chip).toHaveClass(/selected/);
+    await expect(page.locator("#facts")).toBeHidden();
+    await page.locator("#introspect").click();
     await expect(page.locator("#facts .badge.de")).toContainText("kde");
   });
 
@@ -174,16 +177,8 @@ test.describe("iso builder", () => {
       await page.evaluate(() => {
         window.__buildCalls = 0;
         window.tboxBuildIso = async () => { window.__buildCalls++; return 4; };
-        // Edition selection auto-inspects. Pause it so a fast replacement
-        // inspect cannot hide stale facts or readiness.
-        const estimate = navigator.storage.estimate.bind(navigator.storage);
-        navigator.storage.estimate = () => {
-          navigator.storage.estimate = estimate;
-          return new Promise((resolve) => {
-            window.__resumeInspect = () => resolve({ quota: 100e9, usage: 0 });
-          });
-        };
       });
+      if (["platform", "variant"].includes(control)) await page.locator("#base-options > summary").click();
       if (control === "platform") await page.locator("#platform").selectOption("linux/arm64");
       if (control === "variant") await page.locator("#variant").selectOption("sailfin");
       if (control === "image") await page.locator("#image").fill("sailfin:gnome");
@@ -196,12 +191,7 @@ test.describe("iso builder", () => {
       // Test the operation guard too, not just the disabled DOM button.
       await page.evaluate(() => window.build());
       expect(await page.evaluate(() => window.__buildCalls)).toBe(0);
-      if (control === "edition") {
-        await page.evaluate(() => window.__resumeInspect());
-        await expect(page.locator(".badge.de")).toContainText("gnome");
-      } else {
-        await expect(page.locator("#stage")).toContainText(/Inspect required/i);
-      }
+      await expect(page.locator("#stage")).toContainText(/Inspect required/i);
     });
   }
 
@@ -362,7 +352,7 @@ test.describe("iso builder", () => {
   test("inspect detects the image and fills flatpak defaults @walkthrough", async ({ page }) => {
     await page.goto("/");
     // Published catalog inspection is lightweight; full unpack belongs to @full.
-    await page.getByText("Or build from any bootable container image").click();
+    await page.getByText("Use a custom container image").click();
     await page.locator("#image").fill("sailfin:gnome");
     await shot(page, "02-image-entered.png");
     await page.locator("#introspect").click();
@@ -374,7 +364,7 @@ test.describe("iso builder", () => {
     await shot(page, "03-inspected.png");
 
     // Advanced customization panel: per-DE flatpak defaults are prefilled.
-    await page.getByText(/Advanced — customize/).click();
+    await page.locator("#apps-options > summary").click();
     expect(await page.locator("#fplist input[type=checkbox]").count()).toBeGreaterThan(0);
     await shot(page, "04-advanced.png");
   });

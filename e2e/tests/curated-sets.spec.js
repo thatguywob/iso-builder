@@ -30,7 +30,7 @@ async function inspectAs(page, desktop) {
     window.tboxIntrospect = async () =>
       JSON.stringify({ desktop, kernelVer: "6.0.0", hasSdBoot: true, fileCount: 1 });
   }, desktop);
-  await page.getByText("Or build from any bootable container image").click();
+  await page.getByText("Use a custom container image").click();
   await page.locator("#image").fill("bonito:" + desktop);
   await page.locator("#introspect").click();
   await expect(page.locator(".badge.de")).toContainText(desktop);
@@ -74,7 +74,8 @@ test.describe("curated flatpak sets", () => {
 
   test("adds the app ids of a Brewfile set and drops non-ids", async ({ page }) => {
     await inspectAs(page, "kde");
-    await page.getByText(/Advanced — customize/).click();
+    await page.locator("#apps-options > summary").click();
+    await page.getByText("Add an app collection", { exact: true }).click();
     await page.locator("#curated").click();
     await expect(page.locator("#log")).toContainText("added 2 apps from the Aurora core apps set");
     await expect(page.locator("#fplist")).toContainText("org.example.Alpha");
@@ -84,7 +85,8 @@ test.describe("curated flatpak sets", () => {
 
   test("adds the apps of a preinstall set and skips runtimes", async ({ page }) => {
     await inspectAs(page, "niri");
-    await page.getByText(/Advanced — customize/).click();
+    await page.locator("#apps-options > summary").click();
+    await page.getByText("Add an app collection", { exact: true }).click();
     await page.locator("#curated").click();
     await expect(page.locator("#log")).toContainText("added 1 apps from the Zirconium apps set");
     await expect(page.locator("#fplist")).toContainText("org.example.Gamma");
