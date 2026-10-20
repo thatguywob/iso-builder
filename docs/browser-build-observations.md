@@ -7,7 +7,7 @@ The engine pin in `native/go.mod` selects tacklebox commit
 `b2c917d7e896d49d095daefe6a812beb9d4398d6` (the merged result API).
 CI builds `tbox.wasm` from that commit and pairs it with the compiler's
 `wasm_exec.js`; the e2e and deployment jobs use that same artifact.
-No released native executable or generated WASM is committed here.
+Keep generated binaries out of this repository.
 
 The consumer calls the result API once.
 An error does not start a second build through the numeric API.
