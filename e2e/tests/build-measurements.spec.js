@@ -21,9 +21,6 @@ async function observedPage(page, { body = WASM, status = 200, contentType = "ap
   });
   await page.route("**/*", async route => {
     const url = new URL(route.request().url());
-    if (url.pathname === "/redirect.wasm") {
-      return route.fulfill({ status: 302, headers: { location: "/tbox.wasm" } });
-    }
     if (url.pathname.endsWith(".wasm")) {
       return route.fulfill({ status, contentType, body,
         headers: { "Access-Control-Allow-Origin": "*" } });
@@ -76,7 +73,7 @@ test.describe("native WASM diagnostic observation", () => {
     await expect(loadedWasmMeasurement(page)).rejects.toThrow(/successful observed WASM/);
   });
 
-  for (const source of ["/other.wasm", "/tbox.wasm?unreviewed=1", "/redirect.wasm", "http://other.invalid/tbox.wasm"]) {
+  for (const source of ["/other.wasm", "/tbox.wasm?unreviewed=1", "http://other.invalid/tbox.wasm"]) {
     test(`successful native call rejects diagnostic response ${source}`, async ({ page }) => {
       await observedPage(page);
       const nativeSucceeded = await page.evaluate(async source => {
@@ -87,6 +84,22 @@ test.describe("native WASM diagnostic observation", () => {
       await expect(loadedWasmMeasurement(page)).rejects.toThrow(/successful observed WASM/);
     });
   }
+
+  test("redirected response metadata boundary injection rejects diagnostics while native tiny WASM succeeds", async ({ page }) => {
+    await observedPage(page);
+    const result = await page.evaluate(async () => {
+      const response = await fetch("/tbox.wasm");
+      // Inject the observer's redirect-metadata boundary only. Playwright does
+      // not route a redirected request's target, so a real redirect here could
+      // load the application's Go engine instead of the tiny synthetic module.
+      Object.defineProperty(response, "redirected", { value: true });
+      const instantiated = await WebAssembly.instantiateStreaming(response, {});
+      return { redirected: response.redirected,
+        nativeSucceeded: instantiated.instance instanceof WebAssembly.Instance };
+    });
+    expect(result).toEqual({ redirected: true, nativeSucceeded: true });
+    await expect(loadedWasmMeasurement(page)).rejects.toThrow(/successful observed WASM/);
+  });
 
   for (const failure of ["invalid module", "HTTP failure", "wrong MIME"]) {
     test(`native ${failure} remains a failure and produces no diagnostic`, async ({ page }) => {
@@ -335,6 +348,14 @@ function validRecord() {
 }
 
 test.describe("diagnostic record validation", () => {
+  test("preserves a valid CDP HeadlessChrome product without normalization", () => {
+    const input = validRecord();
+    input.browser = { product: "HeadlessChrome/140.0.1.2", userAgent: "Synthetic HeadlessChrome fixture" };
+    const record = diagnosticRecord(input);
+    expect(record.browser).toEqual(input.browser);
+    expect(record.qualification).toBe("not-assessed");
+  });
+
   test("emits only diagnostic v1 fields and preserves distinct identities", () => {
     const input = validRecord();
     input.iso.qualified = true;
@@ -388,6 +409,9 @@ test.describe("diagnostic record validation", () => {
   }
   for (const browser of [null, {}, { product: "chromium", userAgent: "fixture" },
     { product: "Chrome/140.0.1", userAgent: " " }, { product: "Chrome/unknown", userAgent: "fixture" },
+    { product: "HeadlessChrome/unknown", userAgent: "fixture" },
+    { product: "OtherHeadlessChrome/140.0.1.2", userAgent: "fixture" },
+    { product: "HeadlessChrome/140.0.1.2 trailing", userAgent: "fixture" },
     { product: "Chrome/140.0.1", userAgent: 1 }]) {
     test(`rejects missing or malformed browser version ${JSON.stringify(browser)}`, () => {
       const input = validRecord(); input.browser = browser;

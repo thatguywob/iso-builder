@@ -99,7 +99,7 @@ function diagnosticRecord({ iso, wasm, browser, phasesMs }) {
       throw new Error("invalid byte measurement");
     }
   }
-  if (!browser || typeof browser.product !== "string" || !/^Chrome\/[0-9]+(?:\.[0-9]+)+$/.test(browser.product) ||
+  if (!browser || typeof browser.product !== "string" || !/^(?:Chrome|HeadlessChrome)\/[0-9]+(?:\.[0-9]+)+$/.test(browser.product) ||
       typeof browser.userAgent !== "string" || !browser.userAgent.trim()) throw new Error("missing Chromium version");
   for (const name of ["inspect", "build", "save"]) {
     if (typeof phasesMs?.[name] !== "number" || !Number.isFinite(phasesMs[name]) || phasesMs[name] < 0) throw new Error("invalid phase duration");
