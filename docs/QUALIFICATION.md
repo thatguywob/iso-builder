@@ -71,3 +71,36 @@ trusted browser-build workflow and artifact. A self-asserted origin flag does
 not prove that association. The current producer lacks this integration and
 must keep targets unqualified. A native install result does not establish
 browser origin. Placeholder browser names and versions cannot pass the gate.
+
+## Browser build diagnostic measurements
+
+The existing `@full` test writes a separate `build-measurements-*.json` file
+beside its legacy evidence. The full diagnostics artifact includes this file;
+the qualification-evidence validator does not consume it.
+
+The record contains the SHA-256 and byte count of the saved ISO. If the test
+retains a separate copy for later steps, it hashes that copy too and needs
+an exact match. The file checks describe the observed snapshot; they do not
+prevent later mutation or authenticate a published artifact.
+
+A test-page observer clones the exact Response passed to native
+`WebAssembly.instantiateStreaming`. It reads at most 64 MiB, hashes those bytes,
+and needs exactly one call that loads `tbox.wasm` from the same origin.
+The call must succeed without a redirect. Missing, failed or ambiguous observations prevent the record.
+This records bytes supplied to `instantiateStreaming`, not an authenticated engine.
+
+The observer exists only in the test page. It leaves the native result and
+failure independent of the hash operation. Its memory and timing overhead
+means these samples do not qualify performance.
+
+Chromium product/version and user agent come from the same page's CDP session.
+Stage durations use a monotonic clock and exclude navigation. The record has
+kind `diagnostic-build-measurements`, with `qualification: not-assessed`.
+Tiny fixtures test the observer and file checks without a multi-GB ISO build.
+They do not establish a real browser build or installation result.
+
+The engine at [the tacklebox pin](https://github.com/tuna-os/tacklebox/blob/d36fdb8417819a7075cecfd6cf062b442c07335a/cmd/tbwasm/main.go) resolves a platform manifest digest and checks
+its applied overlay internally. Its browser build API returns only a byte
+count. A later contract for engine results needs review. It must expose identities
+for the consumed source, overlay and installed frontend. These observations cannot come from the catalog or tags. This diagnostic record is not a v2 receipt,
+and it changes no catalog admission or download route.
