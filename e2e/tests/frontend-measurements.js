@@ -94,7 +94,9 @@ function dedicatedWorkerTransport(raw, limits, origin) {
       const requestId = key(source, event.requestId);
       const worker = source && event.requestId === source.targetId ? source : targets.get(event.requestId);
       let record = records.get(requestId);
-      if (source && !source.controlsSent) throw new Error("worker network event preceded owned cache controls");
+      if (source && !source.controlsSent) {
+        throw new Error(`worker network event preceded owned cache controls (${method}; request ${String(event.requestId).slice(0, 80)}; session ${source.id.slice(0, 80)}; dispatched commands ${source.commandId})`);
+      }
       if (method === "Network.requestWillBeSent") {
         const candidate = !!frontendKind(event.request.url, event.type || "Other") ||
           (new URL(event.request.url).origin === origin && ["fetch", "xhr"].includes((event.type || "Other").toLowerCase()));
@@ -159,7 +161,6 @@ function dedicatedWorkerTransport(raw, limits, origin) {
       child.setup = (async () => {
         const replies = [];
         for (const [method, params] of [
-          ["Network.enable", { maxTotalBufferSize: limits.maxTotalBytes, maxResourceBufferSize: limits.maxResponseBytes }],
           ["Network.setCacheDisabled", { cacheDisabled: true }],
           ["Network.setBypassServiceWorker", { bypass: true }],
           ["Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: false, filter: [{ type: "worker" }, { exclude: true }] }],
@@ -170,7 +171,19 @@ function dedicatedWorkerTransport(raw, limits, origin) {
           await command.sent;
           if (failure) throw failure;
         }
+        // Each outer acknowledgement confirms dispatch to this child, not an
+        // inner renderer reply. Set this boundary before Network.enable: enable
+        // can emit initial-request history before its own dispatch returns.
+        // The creator request remains identity-bound and every inner reply is
+        // still required below; this does not claim controls predated that fetch.
         child.controlsSent = true;
+        const enable = childCommand(child, "Network.enable", {
+          maxTotalBufferSize: limits.maxTotalBytes, maxResourceBufferSize: limits.maxResponseBytes,
+        });
+        replies.push(enable.result);
+        enable.result.catch(fail);
+        await enable.sent;
+        if (failure) throw failure;
         const resume = childCommand(child, "Runtime.runIfWaitingForDebugger");
         replies.push(resume.result);
         await resume.sent;

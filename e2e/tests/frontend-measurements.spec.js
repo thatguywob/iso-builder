@@ -523,7 +523,7 @@ test.describe("experimental owned dedicated worker transport", () => {
     expect(observation.coverage).toBe("page-and-direct-dedicated-workers-experimental");
     expect(observation.assets.find(asset => asset.url === WORKER_URL)).toMatchObject(measurement(WORKER_BODY));
     expect(page.session.workerCommands.slice(0, 5).map(command => command.method)).toEqual([
-      "Network.enable", "Network.setCacheDisabled", "Network.setBypassServiceWorker", "Target.setAutoAttach", "Runtime.runIfWaitingForDebugger",
+      "Network.setCacheDisabled", "Network.setBypassServiceWorker", "Target.setAutoAttach", "Network.enable", "Runtime.runIfWaitingForDebugger",
     ]);
     expect(page.session.calls.find(call => call.method === "Target.setAutoAttach").params).toMatchObject({ flatten: false, waitForDebuggerOnStart: true });
     expect(page.session.workerCommands.find(command => command.method === "Network.getResponseBody").params).toEqual({ requestId: "worker-target" });
@@ -545,6 +545,91 @@ test.describe("experimental owned dedicated worker transport", () => {
     await attachWorker(page);
     workerMain(page);
     expect((await observer.finish()).assets).toHaveLength(2);
+  });
+
+  test("captures exact initial worker history emitted during Network.enable dispatch", async () => {
+    const { page, observer, emit } = await setup({ experimentalDedicatedWorkers: true });
+    emit();
+    // The initial script starts on the already-controlled creator target. Its
+    // identity must migrate, not be replaced by a same-URL request or refetch.
+    workerMain(page, { complete: false });
+    let atEnable;
+    page.session.childHandler = command => {
+      if (command.method !== "Network.enable") return;
+      atEnable = page.session.workerCommands.map(command => command.method);
+      childEvent(page, "Network.requestWillBeSent", { requestId: "worker-target", type: "Script",
+        request: { url: WORKER_URL, method: "GET" } });
+      childEvent(page, "Network.responseReceived", { requestId: "worker-target", type: "Script",
+        response: { url: WORKER_URL, status: 200, headers: { "content-length": String(WORKER_BODY.length) }, mimeType: "text/javascript" } });
+      childEvent(page, "Network.loadingFinished", { requestId: "worker-target" });
+    };
+    await attachWorker(page);
+    const observation = await observer.finish();
+    expect(atEnable).toEqual(["Network.setCacheDisabled", "Network.setBypassServiceWorker", "Target.setAutoAttach", "Network.enable"]);
+    expect(observation.assets.find(asset => asset.url === WORKER_URL))
+      .toMatchObject({ ...measurement(WORKER_BODY), responseCount: 1 });
+    expect(page.session.workerCommands.filter(command => command.method === "Network.getResponseBody"))
+      .toEqual([expect.objectContaining({ sessionId: "worker-session", params: { requestId: "worker-target" } })]);
+    expect(page.session.calls.some(call => call.method === "Network.loadNetworkResource")).toBe(false);
+  });
+
+  for (const cacheSignal of ["requestServedFromCache", "fromDiskCache", "fromPrefetchCache", "fromServiceWorker"]) {
+    test(`rejects ${cacheSignal} in initial history emitted during enable`, async () => {
+      const { page, observer, emit } = await setup({ experimentalDedicatedWorkers: true });
+      emit(); workerMain(page, { complete: false });
+      page.session.childHandler = command => {
+        if (command.method !== "Network.enable") return;
+        if (cacheSignal === "requestServedFromCache") {
+          childEvent(page, "Network.requestServedFromCache", { requestId: "worker-target" });
+        } else {
+          childEvent(page, "Network.responseReceived", { requestId: "worker-target", type: "Script",
+            response: { url: WORKER_URL, status: 200, headers: { "content-length": String(WORKER_BODY.length) },
+              mimeType: "text/javascript", [cacheSignal]: true } });
+        }
+      };
+      await attachWorker(page);
+      await expect(observer.finish()).rejects.toThrow(/cache|service-worker/);
+    });
+  }
+
+  test("enable-time worker history cannot invent a missing creator request", async () => {
+    const { page, observer, emit } = await setup({ experimentalDedicatedWorkers: true });
+    emit();
+    page.session.childHandler = command => {
+      if (command.method === "Network.enable") childEvent(page, "Network.requestWillBeSent", {
+        requestId: "worker-target", type: "Script", request: { url: WORKER_URL, method: "GET" },
+      });
+    };
+    await attachWorker(page);
+    await expect(observer.finish()).rejects.toThrow(/no original creator request/);
+  });
+
+  for (const failedControl of ["Network.setCacheDisabled", "Network.setBypassServiceWorker"]) {
+    test(`does not enable or resume after reported ${failedControl} rejection`, async () => {
+      const { page, observer, emit } = await setup({ experimentalDedicatedWorkers: true });
+      emit();
+      page.session.childHandler = command => {
+        if (command.method === failedControl) throw new Error("owned safety control rejected");
+      };
+      await attachWorker(page);
+      await expect(observer.finish()).rejects.toThrow(/owned safety control rejected/);
+      expect(page.session.workerCommands.some(command => ["Network.enable", "Runtime.runIfWaitingForDebugger"].includes(command.method))).toBe(false);
+    });
+  }
+
+  test("a delayed inner cache-control rejection cannot yield a successful snapshot", async () => {
+    const { page, observer, emit } = await setup({ experimentalDedicatedWorkers: true });
+    emit(); workerMain(page, { complete: false });
+    let cacheCommand;
+    page.session.childHandler = command => {
+      if (command.method === "Network.setCacheDisabled") { cacheCommand = command; return "no-reply"; }
+      if (command.method === "Runtime.runIfWaitingForDebugger") {
+        page.session.emit("Target.receivedMessageFromTarget", { sessionId: cacheCommand.sessionId,
+          message: JSON.stringify({ id: cacheCommand.id, error: { message: "delayed cache control rejection" } }) });
+      }
+    };
+    await attachWorker(page);
+    await expect(observer.finish()).rejects.toThrow(/delayed cache control rejection/);
   });
 
   for (const missing of ["start", "headers", "completion"]) {
