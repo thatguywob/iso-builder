@@ -82,7 +82,8 @@
       if (!config.variants.some(v=>v.id===selection.variant) || !desktopIds.has(selection.flavor)) fail('default references unknown choice');
     } else if (selection?.kind==='image') {
       object(selection,['kind','image','platform'],['kind','image','platform'],'default_selection');
-      if (typeof selection.image!=='string' || !/^[a-z0-9.-]+(?::[0-9]+)?\/[a-z0-9._/-]+(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}|@sha256:[0-9a-f]{64})$/.test(selection.image)) fail('invalid default image');
+      text(selection.image, 'default image');
+      if (!/^[a-z0-9.-]+(?::[0-9]+)?\/[a-z0-9._-]+(?:\/[a-z0-9._-]+)*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?:@sha256:[0-9a-f]{64})?|@sha256:[0-9a-f]{64})$/.test(selection.image)) fail('invalid default image');
     } else fail('unsupported selection kind');
     if (!guided && !PLATFORMS.includes(selection.platform)) fail('unsupported default platform');
     if ('ddi_channels' in config) {

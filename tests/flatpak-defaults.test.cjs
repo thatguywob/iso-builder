@@ -21,3 +21,14 @@ test('new target offers defaults without clobbering; restore accepts latest only
  assert.deepEqual(s.inspect('b',suggestions({suggestedFlatpaks:[B]})).selected,[A]);
  assert.deepEqual(s.restore().selected,[B]); assert.equal(s.snapshot().pending,false);
 });
+test('stale inspection is rejected while same-operation removal keeps its diagnostic',()=>{
+ const fs=require('node:fs'),vm=require('node:vm');
+ const code=fs.readFileSync(require('node:path').join(__dirname,'../app/public/app.js'),'utf8');
+ const helper=code.slice(code.indexOf('function inspectionStillCurrent(op)'),code.indexOf('async function inspect()'));
+ const op={}, logs=[];
+ const context={currentOp:op,operationMatchesForm:()=>false,log:message=>logs.push(message)};
+ vm.createContext(context);vm.runInContext(helper,context);
+ assert.equal(context.inspectionStillCurrent(op),false);assert.match(logs[0],/no longer available/);
+ logs.length=0;assert.equal(context.inspectionStillCurrent({}),false);assert.equal(logs.length,0);
+ context.operationMatchesForm=()=>true;assert.equal(context.inspectionStillCurrent(op),true);
+});

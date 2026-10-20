@@ -1101,6 +1101,15 @@ function applyDetectedDesktopAndPackaging(fObj) {
   }
 }
 
+function inspectionStillCurrent(op) {
+  if (currentOp !== op) return false;
+  if (!operationMatchesForm(op)) {
+    log("The selected image is no longer available or has changed. Choose an image again.");
+    return false;
+  }
+  return true;
+}
+
 async function inspect() {
   if (BUILDER_CONFIG.preview_only) return;
   if (isOperationBusy()) return;
@@ -1131,7 +1140,7 @@ async function inspect() {
       log(`storage quota ≈ ${((quota - usage) / 1e9).toFixed(1)} GB free`);
     }
     const quotaStatus = await checkStorageQuota(op);
-    if (currentOp !== op || !operationMatchesForm(op)) return;
+    if (!inspectionStillCurrent(op)) return;
 
     const hasTestStub =
       (typeof window.tboxIntrospect === "function" && window.tboxIntrospect !== wasmNativeIntrospect) ||
@@ -1140,7 +1149,7 @@ async function inspect() {
     if (!hasTestStub) {
       await loadCatalogSnapshot();
       if ((GUIDED && !manualImageMode && !validGuidedSelection()) || $("image").value.trim() !== raw) throw new Error("The selected image is no longer available in this catalog. Choose an image again.");
-      if (currentOp !== op || !operationMatchesForm(op)) return;
+      if (!inspectionStillCurrent(op)) return;
       const refreshed = buildRequestFromForm(op);
       Object.assign(op, refreshed);
     }
@@ -1203,7 +1212,7 @@ async function inspect() {
       globalThis.tboxLayerCache?.setPrefetchEnabled?.(true);
     }
     const inspectedFacts = JSON.parse(await window.tboxIntrospect(image, registry, op.platform, op.request));
-    if (currentOp !== op || !operationMatchesForm(op)) return;
+    if (!inspectionStillCurrent(op)) return;
     facts = inspectedFacts;
     renderFactsBadges(facts, op);
     applyDetectedDesktopAndPackaging(facts);
@@ -1226,7 +1235,7 @@ async function inspect() {
     }
     updateShare();
   } catch (e) {
-    if (currentOp !== op || !operationMatchesForm(op)) return;
+    if (!inspectionStillCurrent(op)) return;
     op.state = "failed";
     op.ready = false;
     op.error = String(e);
