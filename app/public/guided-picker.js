@@ -64,8 +64,8 @@
       summary(container);
       const list=questions();step=Math.min(step,list.length);
       const crumbs=el('nav',undefined,'guided-breadcrumbs');crumbs.setAttribute('aria-label','Image questions');
-      list.slice(0,step+1).forEach((facet,index)=>{const crumb=index===step?el('span',model.facetPresentation[facet].label):button(model.facetPresentation[facet].label,()=>{step=index;render('guided-question');});if(index===step)crumb.setAttribute('aria-current','step');crumbs.append(crumb);});
-      if(step===list.length){const current=el('span','Review image');current.setAttribute('aria-current','step');crumbs.append(current);}container.append(crumbs);
+      list.slice(0,step).forEach((facet,index)=>{crumbs.append(button(model.facetPresentation[facet].label,()=>{step=index;render('guided-question');}));});
+      if(crumbs.childElementCount)container.append(crumbs);
       if(message){const note=el('p',message,'note');note.setAttribute('role','alert');container.append(note);}
       if(conflict){const box=el('div',undefined,'guided-conflict');box.setAttribute('role','alert');box.append(el('p',`This change will clear: ${conflict.affected.map(c=>`${model.facetPresentation[c.facetId].label}: ${label(c.facetId,c.value)}`).join(', ')}.`));box.append(button('Clear those choices and continue',()=>{state=conflict.proposedState;conflict=null;suspended=false;publish();render('guided-question');}),button('Keep my choices',()=>{conflict=null;render('guided-question');}));container.append(box);}
       if(step<list.length){

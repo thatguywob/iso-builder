@@ -211,7 +211,11 @@ test.describe("browser result lifecycle", () => {
   }
   test("changed options during sink close cannot republish an obsolete result", async ({ page }) => {
     await readyPage(page);
-    await page.getByText("Advanced settings", { exact: true }).click();
+    // Custom-image setup already opens Advanced in the guided flow.
+    if (!await page.locator("#advanced-options").evaluate(el => el.open)) {
+      await page.getByText("Advanced settings", { exact: true }).click();
+    }
+    await expect(page.locator("#label")).toBeVisible();
     await page.evaluate(() => { window.__pauseClose = true; });
     await page.locator("#build").click();
     await page.waitForFunction(() => window.__resumeClose);
