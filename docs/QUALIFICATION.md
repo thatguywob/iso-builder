@@ -107,4 +107,4 @@ qualification receipts and change no catalog admission or download route.
 
 The [integration proposal](browser-qualification-integration-plan.md) describes
 the reviewed retention, provenance and strict-harness gaps. It authorizes no
-build, publication or routing change.
+build, publication or change to download routes.

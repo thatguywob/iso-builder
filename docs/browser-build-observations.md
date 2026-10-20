@@ -93,7 +93,9 @@ A full candidate needs a separate workflow dispatch with `run_full: true`.
 The `only` input selects an edition. `keep_iso: true` uploads the ISO to R2
 only after the guest test succeeds. If that guest test fails, the workflow
 does not retain the ISO for a later test. The guest harness still uses the
-existing pin. Opt-in diagnostic retention is described in [candidate retention](candidate-retention.md).
+existing pin.
+
+See [candidate retention](candidate-retention.md) for the opt-in path to retain diagnostics.
 Strict qualification still needs separate provenance and harness integration.
 
 Run the focused suite from `e2e` with the installed Playwright dependency:
