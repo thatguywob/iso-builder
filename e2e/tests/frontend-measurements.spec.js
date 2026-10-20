@@ -641,6 +641,83 @@ test.describe("experimental owned dedicated worker transport", () => {
     });
   }
 
+  // Falsification: diagnostic-only changes cannot repair or hide an orphan.
+  // Capture bounded opaque identities, never request/response payload fields.
+  test("pre-control worker diagnostics redact malformed request and session IDs", async () => {
+    const { page, observer, emit } = await setup({ experimentalDedicatedWorkers: true });
+    emit();
+    const sessionId = "http://127.0.0.1/session?secret=session-marker";
+    page.session.emit("Target.attachedToTarget", { sessionId,
+      targetInfo: { targetId: "worker-target", type: "worker", parentId: "owned-page", url: WORKER_URL }, waitingForDebugger: true });
+    childEvent(page, "Network.responseReceived", { requestId: "http://127.0.0.1/request?secret=request-marker",
+      response: { url: `${WORKER_URL}?secret=url-marker`, headers: { authorization: "header-marker" } } }, sessionId);
+    const error = await observer.finish().then(() => null, error => error);
+    expect(error?.message).toContain("preceded owned cache controls");
+    expect(error.message).toContain("request [redacted]; session [redacted]");
+    for (const marker of ["http:", "secret=", "session-marker", "request-marker", "url-marker", "header-marker"]) expect(error.message).not.toContain(marker);
+  });
+
+  test("orphan worker diagnostics retain exact creator and child IDs without a URL join", async () => {
+    const { page, observer, emit } = await setup({ experimentalDedicatedWorkers: true });
+    emit(); await attachWorker(page);
+    workerMain(page, { complete: false });
+    childEvent(page, "Network.responseReceived", { requestId: "different-child-request", type: "Script",
+      response: { url: WORKER_URL, status: 200, headers: { "content-length": String(WORKER_BODY.length) }, mimeType: "text/javascript" } });
+    const error = await observer.finish().then(() => null, error => error);
+    expect(error?.message).toContain("worker response has no original owned request; identityTrace=");
+    const trace = JSON.parse(error.message.split("; identityTrace=")[1]);
+    expect(trace).toMatchObject({ requestId: "different-child-request", source: "worker",
+      sessionId: "worker-session", targetId: "worker-target", ownerTargetId: "owned-page" });
+    expect(trace.recent).toContainEqual(expect.objectContaining({ method: "Network.requestWillBeSent",
+      requestId: "worker-target", source: "page", sessionId: null, targetId: "owned-page" }));
+    expect(trace.recent.at(-1)).toMatchObject({ method: "Network.responseReceived", requestId: "different-child-request", source: "worker" });
+    expect(page.session.workerCommands.some(command => command.method === "Network.getResponseBody")).toBe(false);
+    expect(page.session.calls.some(call => call.method === "Network.loadNetworkResource")).toBe(false);
+  });
+
+  test("orphan worker identity trace is bounded and redacts URL query headers body and malformed IDs", async () => {
+    const { page, observer, emit } = await setup({ experimentalDedicatedWorkers: true });
+    emit();
+    const targetId = "http://127.0.0.1/target?secret=target-marker";
+    const sessionId = "session?secret=session-marker";
+    await attachWorker(page, { targetId, sessionId });
+    for (let i = 0; i < 24; i++) {
+      const requestId = `recent-${i}`, url = `${ORIGIN}/data?secret=query-marker`;
+      page.session.emit("Network.requestWillBeSent", { requestId, type: "Other",
+        request: { url, method: "GET", headers: { authorization: "header-marker" }, postData: "body-marker" } });
+      page.session.emit("Network.responseReceived", { requestId, type: "Other",
+        response: { url, status: 200, headers: { "x-secret": "response-header-marker" }, mimeType: "application/octet-stream" } });
+      page.session.emit("Network.loadingFinished", { requestId });
+    }
+    childEvent(page, "Network.responseReceived", {
+      requestId: "http://127.0.0.1/request?secret=request-marker", type: "Script",
+      response: { url: `${WORKER_URL}?secret=response-url-marker`, status: 200,
+        headers: { authorization: "orphan-header-marker" }, body: "orphan-body-marker" },
+    }, sessionId);
+    const error = await observer.finish().then(() => null, error => error);
+    expect(error?.message).toContain("worker response has no original owned request; identityTrace=");
+    const trace = JSON.parse(error.message.split("; identityTrace=")[1]);
+    expect(trace.recent).toHaveLength(32);
+    expect(trace).toMatchObject({ requestId: "[redacted]", sessionId: "[redacted]", targetId: "[redacted]" });
+    expect(trace.recent.some(event => event.requestId === "recent-0")).toBe(false);
+    expect(trace.recent.at(-1)).toMatchObject({ method: "Network.responseReceived", source: "worker", requestId: "[redacted]" });
+    expect(error.message.length).toBeLessThan(16 * 1024);
+    for (const marker of ["http:", "secret=", "query-marker", "target-marker", "session-marker", "request-marker",
+      "response-url-marker", "header-marker", "body-marker"]) expect(error.message).not.toContain(marker);
+    for (const event of trace.recent) expect(Object.keys(event).sort()).toEqual(["method", "requestId", "sessionId", "source", "targetId"]);
+  });
+
+  test("orphan diagnostics redact overlong opaque protocol IDs instead of retaining prefixes", async () => {
+    const { page, observer, emit } = await setup({ experimentalDedicatedWorkers: true });
+    emit(); await attachWorker(page);
+    childEvent(page, "Network.responseReceived", { requestId: "sensitive-prefix-" + "a".repeat(100), type: "Script",
+      response: { url: WORKER_URL, status: 200, headers: {} } });
+    const error = await observer.finish().then(() => null, error => error);
+    expect(error?.message).toContain("worker response has no original owned request; identityTrace=");
+    expect(error.message).not.toContain("sensitive-prefix-");
+    expect(JSON.parse(error.message.split("; identityTrace=")[1]).requestId).toBe("[redacted]");
+  });
+
   test("same-URL page fetch cannot replace worker initial-request identity", async () => {
     const { page, observer, emit } = await setup({ experimentalDedicatedWorkers: true });
     emit(); emit({ url: WORKER_URL, body: WORKER_BODY, type: "script" });

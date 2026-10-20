@@ -53,6 +53,21 @@ function dedicatedWorkerTransport(raw, limits, origin) {
   let closed = false;
   let failure = null;
   let ownerTargetId = null;
+  // Failure-only bounded identity diagnostics. Never retain event objects,
+  // URLs, headers, bodies or arbitrary protocol text in this ring.
+  const recentIdentities = [];
+  const opaqueIdentity = value => value == null ? null :
+    typeof value === "string" && /^[A-Za-z0-9._-]{1,80}$/.test(value) ? value : "[redacted]";
+  const rememberIdentity = (method, requestId, source) => {
+    const identity = {
+      method, requestId: opaqueIdentity(requestId), source: source ? "worker" : "page",
+      sessionId: source ? opaqueIdentity(source.id) : null,
+      targetId: opaqueIdentity(source ? source.targetId : ownerTargetId),
+    };
+    recentIdentities.push(identity);
+    if (recentIdentities.length > 32) recentIdentities.shift();
+    return identity;
+  };
   const fail = error => {
     failure ||= error instanceof Error ? error : new Error(String(error));
     transport.emit("observationError", failure);
@@ -91,11 +106,12 @@ function dedicatedWorkerTransport(raw, limits, origin) {
   const forward = (method, event, source = null) => {
     if (closed || failure) return;
     try {
+      const identity = rememberIdentity(method, event.requestId, source);
       const requestId = key(source, event.requestId);
       const worker = source && event.requestId === source.targetId ? source : targets.get(event.requestId);
       let record = records.get(requestId);
       if (source && !source.controlsSent) {
-        throw new Error(`worker network event preceded owned cache controls (${method}; request ${String(event.requestId).slice(0, 80)}; session ${source.id.slice(0, 80)}; dispatched commands ${source.commandId})`);
+        throw new Error(`worker network event preceded owned cache controls (${method}; request ${opaqueIdentity(event.requestId)}; session ${opaqueIdentity(source.id)}; dispatched commands ${source.commandId})`);
       }
       if (method === "Network.requestWillBeSent") {
         const candidate = !!frontendKind(event.request.url, event.type || "Other") ||
@@ -114,7 +130,11 @@ function dedicatedWorkerTransport(raw, limits, origin) {
         records.set(requestId, record);
         if (records.size > limits.maxResponses * 2) throw new Error("too many worker transport request identities");
       } else if (method === "Network.responseReceived") {
-        if (!record) throw new Error("worker response has no original owned request");
+        if (!record) {
+          throw new Error("worker response has no original owned request; identityTrace=" + JSON.stringify({
+            ...identity, ownerTargetId: opaqueIdentity(ownerTargetId), recent: recentIdentities,
+          }));
+        }
         if (event.response.fromDiskCache || event.response.fromPrefetchCache || event.response.fromServiceWorker) {
           // Preserve every cache signal even when the main response migrates.
           transport.emit(method, { ...event, requestId });
@@ -158,6 +178,7 @@ function dedicatedWorkerTransport(raw, limits, origin) {
       if (existing?.complete) throw new Error("worker main response completed before target capture");
       children.set(sessionId, child);
       targets.set(child.targetId, child);
+      rememberIdentity("Target.attachedToTarget", null, child);
       child.setup = (async () => {
         const replies = [];
         for (const [method, params] of [
