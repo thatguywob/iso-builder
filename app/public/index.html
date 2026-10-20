@@ -275,7 +275,11 @@
     <h2 id="apps-heading">Add your apps <span class="optional">Optional</span></h2>
     <p class="helper">Choose optional apps from Flathub. Your choices are saved as an app request list. These requests are not yet applied to the live image or installed system.</p>
     <details id="apps-options"><summary>Choose apps <span id="fpcount">0 selected</span></summary>
-      <p id="fpempty" class="helper">No extra apps selected. Desktop defaults are added when you check the image.</p>
+      <p id="fpempty" class="helper">No extra apps selected. Check the image to load its suggested defaults.</p>
+      <p id="fpdefaults-status" class="helper" role="status">Defaults have not been checked for this image.</p>
+      <div class="row"><button type="button" id="fpdefaults-restore" class="secondary" disabled>Use checked image defaults</button>
+      <button type="button" id="fpnone" class="secondary">Select no extra apps</button></div>
+      <p id="fproles" class="helper">Terminal, browser and installer coverage is unknown. The image does not provide verified app-role inventory. Native or bundled apps may supply these roles; requested Flathub additions are separate and are not applied yet.</p>
       <div id="fplist" class="fplist"></div>
       <label for="fpsearch">Search Flathub</label>
       <input type="search" id="fpsearch" placeholder="Find an app, like Firefox or GIMP" spellcheck="false" autocomplete="off" aria-describedby="fpstatus">
@@ -432,6 +436,7 @@
 <script src="guided-picker.js"></script>
 <script src="experience-data.js"></script>
 <script src="experiences.js"></script>
+<script src="flatpak-defaults.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

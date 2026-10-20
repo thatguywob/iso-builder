@@ -29,15 +29,14 @@ globalThis.TBOX_BUILDER_CONFIG = {
       "default_flatpaks": [
         "io.github.kolunmi.Bazaar",
         "org.mozilla.firefox",
-        "org.gnome.TextEditor"
+        "com.mattjakeman.ExtensionManager"
       ]
     },
     {
       "id": "kde",
       "default_flatpaks": [
         "io.github.kolunmi.Bazaar",
-        "org.mozilla.firefox",
-        "org.kde.kate"
+        "org.mozilla.firefox"
       ]
     },
     {
@@ -58,8 +57,7 @@ globalThis.TBOX_BUILDER_CONFIG = {
       "id": "xfce",
       "default_flatpaks": [
         "io.github.kolunmi.Bazaar",
-        "org.mozilla.firefox",
-        "org.gnome.TextEditor"
+        "org.mozilla.firefox"
       ]
     }
   ],

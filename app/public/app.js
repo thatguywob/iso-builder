@@ -23,6 +23,7 @@
 // Deployment-owned, validated presentation policy. Never fall back to another brand.
 let BUILDER_CONFIG;
 try {
+  if (!globalThis.TboxFlatpakDefaults) throw new Error("App defaults support is missing");
   if (document.querySelector && !globalThis.TboxExperiences) throw new Error("Deployment experiences are missing or invalid");
   BUILDER_CONFIG = globalThis.TboxBuilderConfig.validate(globalThis.TBOX_BUILDER_CONFIG);
 } catch (error) {
@@ -157,10 +158,7 @@ globalThis.tboxSetCatalogSnapshot = (doc) => {
   return catalogSnapshot;
 };
 
-// Per-DE defaults distilled from the upstream curation (bluefin/common,
-// aurora/common, zirconium): every desktop ships the Bazaar store + a
-// browser; editors follow the desktop's family. The full upstream sets
-// are one pick away (see CURATED_SETS).
+// Configuration defaults are declarations, not installed app inventory.
 const FLATPAK_DEFAULTS = Object.fromEntries(BUILDER_CONFIG.desktops.map(d => [d.id, d.default_flatpaks]));
 const CURATED_SETS = BUILDER_CONFIG.curated_app_sets;
 
@@ -235,6 +233,7 @@ function notify(title, body) {
 }
 
 // ── Flatpak checklist + Flathub search ──────────────────────────────────
+const fpDefaults = globalThis.TboxFlatpakDefaults.create();
 const fpItems = new Map(); // appId -> { checked, name, summary, icon, arches }
 let fpSearchVersion = 0;
 let fpSearchController = null;
@@ -262,6 +261,7 @@ function fpAdd(id, name = "", checked = true, metadata = {}) {
     item.checked = checked;
     if (name) Object.assign(item, fpMetadata({ ...metadata, name }));
   }
+  fpDefaults.edit(fpCollect());
   fpRender();
 }
 
@@ -318,6 +318,7 @@ function fpRender() {
     cb.setAttribute("aria-label", `Include ${v.name || id}`);
     cb.onchange = () => {
       v.checked = cb.checked;
+      fpDefaults.edit(fpCollect());
       label.querySelector(".app-state").textContent = v.checked ? "Selected" : "Not selected";
       fpUpdateCount(); fpRenderResults(); syncOperationOptions(); updateShare();
     };
@@ -822,6 +823,8 @@ function setOperationBusy(busy, phase = null) {
     if (el) el.disabled = Boolean(busy) || (id === "introspect" && BUILDER_CONFIG.preview_only);
   }
   syncInspectAction();
+  if ($("fpnone")) $("fpnone").disabled = Boolean(busy);
+  if ($("fpdefaults-restore")) $("fpdefaults-restore").disabled = !fpCanRestore();
   const box = $("editions");
   if (box) {
     for (const btn of box.querySelectorAll("button.edition")) {
@@ -966,6 +969,8 @@ function operationMatchesForm(op) {
 }
 
 function invalidateOperation(reason = "selection-changed") {
+  if ($("fpdefaults-restore")) $("fpdefaults-restore").disabled = true;
+  if ($("fpdefaults-status")) $("fpdefaults-status").textContent = "Your app choices were kept. Check this image before accepting its defaults.";
   facts = null;
   const wasReadyOrInspected = Boolean(currentOp && (currentOp.ready || currentOp.state !== "idle"));
   rebuildCurrentOperation("idle");
@@ -1060,10 +1065,34 @@ function renderFactsBadges(fObj, op) {
   }
 }
 
-function applyDetectedDesktopAndPackaging(fObj) {
-  if (fpItems.size === 0) {
-    for (const id of FLATPAK_DEFAULTS[fObj.desktop] || []) fpAdd(id);
+function fpCanRestore() {
+  return !isOperationBusy() && Boolean(currentOp?.appsDefaultsChecked) && operationMatchesForm(currentOp)
+    && fpDefaults.snapshot().target === `${$("image").value.trim()}|${currentPlatform()}`;
+}
+
+function fpApplyDefaultState(state) {
+  if (!state.defaults) return;
+  if (!state.pending) {
+    fpItems.clear();
+    for (const id of state.selected) fpItems.set(id, { checked: true, ...fpMetadata() });
+    fpRender();
   }
+  const status = $("fpdefaults-status");
+  if (status) status.textContent = `Defaults from ${state.defaults.source}. ` +
+    (state.pending ? "Your app choices were kept. Use the button to replace them with these defaults." : "You can customize this request list below.") +
+    ` Suggested IDs: ${state.defaults.ids.join(", ") || "none"}.` +
+    " Suggestions do not prove that apps are installed or resolve their remote and branch.";
+  if ($("fpdefaults-restore")) {
+    $("fpdefaults-restore").disabled = !fpCanRestore();
+    $("fpdefaults-restore").textContent = state.defaults.source === "image inspection" ? "Use inspected suggestions" : "Use deployment suggestions";
+  }
+}
+
+function applyDetectedDesktopAndPackaging(fObj) {
+  const key = `${$("image").value.trim()}|${currentPlatform()}`;
+  const defaults = globalThis.TboxFlatpakDefaults.suggestions(fObj, FLATPAK_DEFAULTS[fObj.desktop] || []);
+  currentOp.appsDefaultsChecked = true;
+  fpApplyDefaultState(fpDefaults.inspect(key, defaults));
   renderCuratedSets(fObj.desktop);
   if (fObj.pkgManager) {
     $("pkgsearch").placeholder = `Search packages (${fObj.pkgManager} · ${fObj.repoFamily})…`;
@@ -1102,6 +1131,7 @@ async function inspect() {
       log(`storage quota ≈ ${((quota - usage) / 1e9).toFixed(1)} GB free`);
     }
     const quotaStatus = await checkStorageQuota(op);
+    if (currentOp !== op || !operationMatchesForm(op)) return;
 
     const hasTestStub =
       (typeof window.tboxIntrospect === "function" && window.tboxIntrospect !== wasmNativeIntrospect) ||
@@ -1110,6 +1140,7 @@ async function inspect() {
     if (!hasTestStub) {
       await loadCatalogSnapshot();
       if ((GUIDED && !manualImageMode && !validGuidedSelection()) || $("image").value.trim() !== raw) throw new Error("The selected image is no longer available in this catalog. Choose an image again.");
+      if (currentOp !== op || !operationMatchesForm(op)) return;
       const refreshed = buildRequestFromForm(op);
       Object.assign(op, refreshed);
     }
@@ -1171,7 +1202,9 @@ async function inspect() {
     if (!hasTestStub) {
       globalThis.tboxLayerCache?.setPrefetchEnabled?.(true);
     }
-    facts = JSON.parse(await window.tboxIntrospect(image, registry, op.platform, op.request));
+    const inspectedFacts = JSON.parse(await window.tboxIntrospect(image, registry, op.platform, op.request));
+    if (currentOp !== op || !operationMatchesForm(op)) return;
+    facts = inspectedFacts;
     renderFactsBadges(facts, op);
     applyDetectedDesktopAndPackaging(facts);
     syncOperationOptions();
@@ -1193,6 +1226,7 @@ async function inspect() {
     }
     updateShare();
   } catch (e) {
+    if (currentOp !== op || !operationMatchesForm(op)) return;
     op.state = "failed";
     op.ready = false;
     op.error = String(e);
@@ -1205,7 +1239,7 @@ async function inspect() {
     stopWatch();
     releaseLease();
     setOperationBusy(false, "inspect");
-    $("build").disabled = !op.ready;
+    $("build").disabled = currentOp !== op || !operationMatchesForm(op) || !op.ready;
     showCacheSize();
   }
 }
@@ -1513,7 +1547,7 @@ function updateShare() {
     p.set("platform", plat);
   }
   const fl = fpCollect();
-  if (fl.length) p.set("flatpaks", fl.join(","));
+  if (fl.length || fpDefaults.snapshot().edited) p.set("flatpaks", fl.join(","));
   const pk = pkgCollect();
   if (pk.length) p.set("packages", pk.join(","));
   if ($("label").value && $("label").value !== BUILDER_CONFIG.output.volume_label) p.set("label", $("label").value);
@@ -1581,6 +1615,16 @@ for (const id of ["label", "initrdurl"]) {
 $("shimurl")?.addEventListener("input", () => {
   invalidateOperation("shim-changed");
   updateShare();
+});
+$("fpdefaults-restore")?.addEventListener("click", () => {
+  if (!fpCanRestore()) return;
+  fpApplyDefaultState(fpDefaults.restore());
+});
+$("fpnone")?.addEventListener("click", () => {
+  if (isOperationBusy()) return;
+  for (const item of fpItems.values()) item.checked = false;
+  fpDefaults.edit([]);
+  fpRender();
 });
 $("fpsearch").addEventListener("input", (e) => {
   clearTimeout(fpTimer);
@@ -1863,6 +1907,7 @@ const URL_PACKAGE_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
     const vId = $("variant").value.replace(/^ddi:/, "");
     $("image").value = `${vId}:${urlFlavor}`;
   }
+  if (q.has("flatpaks")) fpDefaults.edit([]);
   if (q.get("flatpaks")) for (const id of q.get("flatpaks").split(",").filter(Boolean)) {
     if (URL_FLATPAK_ID.test(id)) fpAdd(id);
     else log("Ignored ?flatpaks= entry from this link — not a Flatpak application id.");
