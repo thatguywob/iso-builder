@@ -83,7 +83,7 @@
     } else if (selection?.kind==='image') {
       object(selection,['kind','image','platform'],['kind','image','platform'],'default_selection');
       text(selection.image, 'default image');
-      if (!/^[a-z0-9.-]+(?::[0-9]+)?\/[a-z0-9._-]+(?:\/[a-z0-9._-]+)*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?:@sha256:[0-9a-f]{64})?|@sha256:[0-9a-f]{64})$/.test(selection.image)) fail('invalid default image');
+      if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*(?::[0-9]+)?\/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:\/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?:@sha256:[0-9a-f]{64})?|@sha256:[0-9a-f]{64})$/.test(selection.image)) fail('invalid default image');
     } else fail('unsupported selection kind');
     if (!guided && !PLATFORMS.includes(selection.platform)) fail('unsupported default platform');
     if ('ddi_channels' in config) {
