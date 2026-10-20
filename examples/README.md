@@ -1,100 +1,113 @@
-# Configuration-only project demos
+# Guided project previews: one frontend, two configurations
 
-These **unofficial, preview-only** Bluefin and Bazzite examples exercise the same
-ISO Builder frontend. They are not affiliated with or endorsed by either project.
-They do not establish browser ISO creation, boot, installation, Secure Boot,
-hardware compatibility, or image-size qualification.
+These **unofficial, preview-only** Bluefin and Bazzite examples use the same ISO
+Builder frontend. Neither project endorses these examples. No image inspection,
+ISO creation, browser-build qualification, boot/installation testing, or deployment
+is provided by them.
 
-Each directory contains only `builder-config.json`. There is no project-specific
-HTML, JavaScript, stylesheet, engine, relay, or deployment. The deployment-owned
-configuration is validated and compiled with the common builder configuration
-pipeline. Change the configuration file, not the UI source, to switch examples.
+Each project directory contains exactly two data files:
+- `builder-config.json`: portable presentation config v2; branding, six-color
+  palette, bounded font/card styles, question order and facet labels.
+- `guided-catalog.json`: guided catalog v1; documented image identities, facets,
+  source evidence, upstream-status notices and required beta acknowledgement.
 
-`preview_only: true` is a restrictive UI gate. It must disable image inspection
-and ISO building in the shared consumer. It does not grant any new permission,
-registry access, signing trust, or qualification. These examples must not be
-served with a consumer that ignores this field. A disclaimer alone is not a gate.
+There is no project-specific HTML, JavaScript, stylesheet, engine, relay or hosted
+site. Configuration does not contain registry references or admission policy.
+Catalog leaves are documentation-backed **preview** records, never production
+targets. `preview_only: true` blocks inspect/build/autorun. Both examples use
+`default_selection: {kind: "none"}` so the visitor starts with the first question.
 
-## What differs
+## Bluefin
 
-| Setting | Bluefin | Bazzite |
-| --- | --- | --- |
-| Project links | projectbluefin.io / docs.projectbluefin.io | bazzite.gg / docs.bazzite.gg |
-| Example reference | ghcr.io/projectbluefin/dakota:stable | ghcr.io/ublue-os/bazzite:stable |
-| Requested platform | linux/amd64 | linux/amd64 |
-| Desktop metadata | GNOME | KDE Plasma |
-| Accent | #4285f4 (press-kit brand accent) | #8b5cf6 (demo design choice, not an asserted official color) |
-| Proposed output prefix | bluefin-demo | bazzite-demo |
+Illustrated cards and Inter typography identify **Classic**, **Dakota**, and
+**Utah**. Dakota preserves the official picker's Alpha badge. Utah preserves
+Coming soon and the repository's experimental pre-alpha status; its preview
+reference is `ghcr.io/projectbluefin/utah:testing`, never an invented stable tag.
+Classic and Dakota refer to their documented stable streams. Upstream channel
+names do not imply this builder is qualified. The limited three-leaf example
+does not claim to be Bluefin's complete GPU/edition matrix.
 
-No third-party logos, mascots, fonts, or favicons are redistributed or hotlinked.
-Plain-text project names identify the examples. Project repository licenses do
-not by themselves establish artwork or trademark permissions. Official press-kit
-links are recorded for a future asset review; no license is guessed.
+## Bazzite
 
-## Reference scope and freshness
+Thumbnail cards and DM Sans typography follow the documented device-first path:
+- Desktop/laptop → graphics → NVIDIA generation when applicable → KDE/GNOME
+- HTPC → graphics → KDE/GNOME; NVIDIA is the modern path with a required beta notice
+- Handheld → KDE/GNOME; no redundant graphics question
 
-Sources were read on **2026-10-20**; see `provenance.json`. Mutable tags are examples,
-not pins. No OCI manifest, digest, signature, layer, or published platform was
-resolved by these configuration previews. The requested `linux/amd64` target
-maps from upstream x86-64 documentation/source; it does not assert that this
-builder supports or has tested that image. There are intentionally no fabricated
-sizes, checksums, release versions, recommended apps, or compatibility badges.
+The ten explicit image leaves own the valid combinations. No suffixes or
+Cartesian-product image references are manufactured. Older NVIDIA is desktop-only;
+NVIDIA HTPC is not promoted to ordinary supported status by acknowledging the beta
+notice. Handheld is the documented x86-64 path, not a claim that every handheld
+or integrated GPU works. Single-valued channel/platform facts remain visible in
+the review rather than adding unnecessary questions.
 
-The live Bluefin catalog distinguishes **Bluefin** (`projectbluefin/dakota`) from
-**Bluefin Classic** (`ublue-os/bluefin`). Older indexed documentation may show other
-names. This example follows the live catalog, not a synthesized image reference.
-Bluefin's source README also describes remaining installation/upgrade gaps;
-consult the current upstream guidance rather than treating the `stable` tag as
-proof that this builder is qualified.
+## Artwork, typography and provenance
 
-Bazzite's official README documents desktop and Deck images, and its FAQ lists
-GNOME/NVIDIA variants. This minimal example chooses only its ordinary KDE desktop
-reference. It does not offer a cross-product of desktop, GPU, and architecture
-choices that upstream has not verified. Refer to Bazzite's official download
-selector for actual hardware-specific installation media.
+`assets.json` records exact official card-art URLs, source pages, review date and
+individual licensing gaps. The demos reference those public URLs; **no artwork
+bytes are redistributed**. A missing image must retain its text label/description.
+Do not treat a project repository's license as blanket permission for transformed
+website artwork. In particular, the exact license of the website dinosaur and
+Bazzite device/GPU/desktop assets has not been established. Public redistribution
+or vendoring needs a separate review. This local preview is not publication.
 
-## Render locally with the shared consumer
+Palette values reproduce inspected upstream background/surface/accent choices,
+with readable example text colors. `choice_style` is limited to illustrated or
+thumbnail; `font_family` to the shared implementation's system/inter/dm-sans
+choices. Configuration cannot inject CSS, font imports, scripts or markup. Font
+files, if used, are managed once by the shared frontend with its own license
+notices. The Bazzite wordmark is referenced from its official URL with verified press-kit
+license provenance; its aspect ratio and colors must be preserved. Bluefin keeps a
+plain-text header because the verified wordmark is specifically Classic, while
+this example contains three families. No favicon is copied.
 
-From the repository root, after the shared configuration consumer is present:
+Sources were checked on **2026-10-20**. `provenance.json` records project/branding
+sources; each catalog leaf embeds its own image/platform evidence. Mutable tags
+are not digest pins. No OCI manifests, signatures or layer sizes were verified.
+Do not infer published ARM availability from a source build option.
+
+## Render locally using the exact shared frontend
+
+From an integrated repository with the v2 consumer and both common generators:
 
 ```sh
-# Choose bluefin or bazzite. The app source is identical in both cases.
-example=bluefin
+example=bluefin  # or bazzite
 stage=$(mktemp -d)
 cp -a app/public/. "$stage/"
 node scripts/generate-builder-config.cjs \
   --input "examples/$example/builder-config.json" \
   --output "$stage/builder-config-data.js"
+node scripts/generate-guided-catalog.cjs \
+  --catalog-input "examples/$example/guided-catalog.json" \
+  --config "examples/$example/builder-config.json" --output-dir "$stage"
 node scripts/generate-builder-config.cjs \
   --input "examples/$example/builder-config.json" \
   --output "$stage/builder-config-data.js" --check
+node scripts/generate-guided-catalog.cjs \
+  --catalog-input "examples/$example/guided-catalog.json" \
+  --config "examples/$example/builder-config.json" --output-dir "$stage" --check
 python3 -m http.server 8932 --bind 127.0.0.1 --directory "$stage"
 ```
 
-Open `http://127.0.0.1:8932`. Repeat with `example=bazzite` in a fresh staging
-directory after stopping the first server. This copies the shared application
-artifact into temporary local staging; it does not create a maintained frontend
-fork. The committed example directories must remain configuration-only. Do not
-copy the generated preview runtime data over the stock production configuration.
+Open `http://127.0.0.1:8932`. Stop the server and use fresh staging for the other
+example. This copies one shared application artifact temporarily; it does not
+create a maintained frontend fork or overwrite production configuration. Runtime
+reads fixed `builder-config-data.js` and `guided-catalog-data.js` files; arbitrary
+query-string config/catalog loading is not supported. Both generators validate
+before emission, and `--check` detects generated-output drift.
 
-The generator validates the portable contract and emits
-`globalThis.TBOX_BUILDER_CONFIG`. Its `--check` option checks for stale generated
-output. The browser reads the fixed local `builder-config-data.js` file; there
-is no arbitrary query-string configuration loader.
-
-Run the focused configuration-only checks:
+## Tests and evidence boundaries
 
 ```sh
 python3 -m unittest discover -s tests -p test_brand_examples.py -v
 ```
 
-## Verification requirements
-
-Use the shared schema validator for both JSON files. Render the exact same shared
-frontend twice, substituting only its validated deployment-owned configuration.
-Check branding, links, disclaimer, default image/platform, output names, and the
-preview gate on desktop and mobile. Screenshot evidence must show the shared UI,
-not a separate mockup. Tests should reject unknown configuration keys and drift
-between the JSON and generated runtime configuration. Do not enable registry
-requests, downloads, production builds, deployment, or custom domains to capture
-these previews.
+Focused tests cover data-only directories, preview/no-default constraints, exact
+3/10 leaf counts, Bluefin status badges, Bazzite conditional combinations and beta
+acknowledgement metadata, bounded alternate styles, and all card provenance.
+Shared schema, browser validator and catalog-model tests remain authoritative;
+these focused tests do not duplicate them. UI QA must additionally prove the
+same frontend displays each example on desktop/mobile, skips resolved questions,
+preserves warnings, rejects production use of preview leaves, and blocks inspect,
+build and autorun, including Advanced controls. Screenshots prove presentation,
+not image installation support. No deployment or custom domain is authorized.

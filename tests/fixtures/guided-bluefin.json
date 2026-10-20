@@ -1,0 +1,161 @@
+{
+  "schemaVersion": 1,
+  "kind": "guided-image-catalog",
+  "catalogId": "bluefin-preview",
+  "generatedAt": "2026-10-20T16:55:00Z",
+  "snapshotDigest": null,
+  "leaves": [
+    {
+      "id": "bluefin/dakota/stable/linux/amd64",
+      "source": {
+        "kind": "preview",
+        "ref": "ghcr.io/projectbluefin/dakota:stable",
+        "platform": "linux/amd64",
+        "evidence": [
+          {
+            "url": "https://docs.projectbluefin.io/images/",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "ref",
+              "channel",
+              "desktop"
+            ]
+          },
+          {
+            "url": "https://raw.githubusercontent.com/projectbluefin/dakota/testing/Justfile",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "platform"
+            ]
+          }
+        ]
+      },
+      "facets": {
+        "family": [
+          "dakota"
+        ],
+        "desktop": [
+          "gnome"
+        ],
+        "channel": [
+          "stable"
+        ],
+        "graphics": [
+          "amd",
+          "intel"
+        ]
+      },
+      "notices": [
+        {
+          "code": "preview-only",
+          "text": "Unofficial preset preview. Documented x86-64 source; live OCI platform and browser ISO creation are not verified."
+        },
+        {
+          "code": "alpha",
+          "text": "Dakota is labeled Alpha by the official project picker. Review its current known gaps.",
+          "sourceUrl": "https://projectbluefin.io/#scene-picker"
+        }
+      ]
+    },
+    {
+      "id": "bluefin/classic/stable/linux/amd64",
+      "source": {
+        "kind": "preview",
+        "ref": "ghcr.io/ublue-os/bluefin:stable",
+        "platform": "linux/amd64",
+        "evidence": [
+          {
+            "url": "https://docs.projectbluefin.io/images/",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "ref",
+              "channel",
+              "desktop"
+            ]
+          },
+          {
+            "url": "https://docs.projectbluefin.io/downloads/",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "platform"
+            ]
+          }
+        ]
+      },
+      "facets": {
+        "family": [
+          "classic"
+        ],
+        "desktop": [
+          "gnome"
+        ],
+        "channel": [
+          "stable"
+        ],
+        "graphics": [
+          "amd",
+          "intel"
+        ]
+      },
+      "notices": [
+        {
+          "code": "preview-only",
+          "text": "Unofficial preset preview. Documented x86-64 source; live OCI platform and browser ISO creation are not verified."
+        }
+      ]
+    },
+    {
+      "id": "bluefin/utah/testing/linux/amd64",
+      "source": {
+        "kind": "preview",
+        "ref": "ghcr.io/projectbluefin/utah:testing",
+        "platform": "linux/amd64",
+        "evidence": [
+          {
+            "url": "https://github.com/projectbluefin/utah",
+            "checkedAt": "2026-10-20T17:22:00Z",
+            "claims": [
+              "ref",
+              "channel",
+              "desktop",
+              "hardware"
+            ]
+          },
+          {
+            "url": "https://github.com/projectbluefin/utah/blob/main/.github/workflows/build.yml",
+            "checkedAt": "2026-10-20T17:22:00Z",
+            "claims": [
+              "platform"
+            ]
+          }
+        ]
+      },
+      "facets": {
+        "family": [
+          "utah"
+        ],
+        "desktop": [
+          "gnome"
+        ],
+        "channel": [
+          "testing"
+        ],
+        "graphics": [
+          "amd",
+          "intel"
+        ]
+      },
+      "notices": [
+        {
+          "code": "preview-only",
+          "text": "Unofficial preset preview. Image availability and browser ISO creation are not qualified."
+        },
+        {
+          "code": "coming-soon",
+          "text": "The official site labels Utah Coming Soon. The repository provides an experimental pre-alpha testing stream; stable is planned.",
+          "sourceUrl": "https://github.com/projectbluefin/utah"
+        }
+      ]
+    }
+  ]
+}

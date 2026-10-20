@@ -1,6 +1,10 @@
 {
   "repository": "tuna-os/tunaOS",
-  "commit": "ff228124a306302f9221cf9053e728c98fe115ab",
+  "commit": "4b6da7f995333791b8a1a8ea412003a0ec3c702a",
   "path": "docs/iso-builder.config.json",
-  "sha256": "17a54b298e31412ded2ad68b1c2bf2ccbdde66cdf085d4505b181e6ec67a05f0"
+  "sha256": "20acdc41507976054e69d24a1d3d6c42b6c26171acf230bca8a5ac00dfe147fd",
+  "flavors": {
+    "path": "docs/iso-builder.flavors.json",
+    "sha256": "35163032817d10b0e63569a55573bc1329ebdcdfec40249f2c31bfce217b70fa"
+  }
 }

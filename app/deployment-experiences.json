@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "default_id": "tunaos",
+  "experiences": [
+    {"id": "tunaos", "config": "app/public/builder-config.json", "catalog": "app/public/guided-catalog.json"},
+    {"id": "bluefin", "config": "examples/bluefin/builder-config.json", "catalog": "examples/bluefin/guided-catalog.json"},
+    {"id": "bazzite", "config": "examples/bazzite/builder-config.json", "catalog": "examples/bazzite/guided-catalog.json"}
+  ]
+}

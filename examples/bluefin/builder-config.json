@@ -1,16 +1,26 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "preview_only": true,
   "brand": {
     "name": "Bluefin",
     "homepage_url": "https://projectbluefin.io/",
     "documentation_url": "https://docs.projectbluefin.io/",
-    "disclaimer": "Unofficial Bluefin configuration demo. Not affiliated with or endorsed by Bluefin. Preview only; browser ISO creation and installation support are not qualified."
+    "disclaimer": "Unofficial Bluefin configuration preview. Not affiliated with or endorsed by the project. No image inspection or ISO creation; browser build and installation support are not qualified."
   },
   "presentation": {
-    "headline": "Explore a Bluefin image configuration",
-    "intro": "One shared ISO Builder, configured for a different project. Review the example image and defaults; use the official project for installation guidance.",
-    "accent_color": "#4285f4"
+    "headline": "Choose your Bluefin",
+    "intro": "Explore Classic, Dakota and Utah with the same configurable ISO Builder. Upstream release status is separate from this preview.",
+    "accent_color": "#4285f4",
+    "colors": {
+      "background": "#10151f",
+      "surface": "#1f2937",
+      "text": "#ffffff",
+      "muted": "#bdc7d8",
+      "accent": "#4285f4",
+      "accent_text": "#08111f"
+    },
+    "choice_style": "illustrated",
+    "font_family": "inter"
   },
   "output": {
     "volume_label": "BLUEFIN_DEMO",
@@ -19,16 +29,117 @@
   "desktops": [
     {
       "id": "gnome",
-      "name": "GNOME",
-      "description": "Example desktop metadata; not a hardware or installation qualification.",
       "default_flatpaks": []
     }
   ],
-  "variants": [],
   "default_selection": {
-    "kind": "image",
-    "image": "ghcr.io/projectbluefin/dakota:stable",
-    "platform": "linux/amd64"
+    "kind": "none"
   },
-  "curated_app_sets": []
+  "curated_app_sets": [],
+  "selection": {
+    "default_path": "family-first",
+    "paths": [
+      {
+        "id": "family-first",
+        "label": "Start with an image family",
+        "facets": [
+          "family",
+          "graphics",
+          "desktop",
+          "channel",
+          "platform"
+        ]
+      }
+    ],
+    "facets": [
+      {
+        "id": "family",
+        "label": "Choose an image family",
+        "values": [
+          {
+            "id": "classic",
+            "label": "Classic",
+            "description": "The established Bluefin experience. Use the official download guidance for installation.",
+            "card": {
+              "image_url": "https://projectbluefin.io/characters/leaping.webp",
+              "image_alt": "Bluefin Classic dinosaur artwork",
+              "badge": "For everyone"
+            }
+          },
+          {
+            "id": "dakota",
+            "label": "Dakota",
+            "description": "The next-generation Bluefin. Alpha status on the official picker; review its precautions.",
+            "card": {
+              "image_url": "https://projectbluefin.io/characters/dakota.webp",
+              "image_alt": "Dakota dinosaur artwork",
+              "badge": "Alpha"
+            }
+          },
+          {
+            "id": "utah",
+            "label": "Utah",
+            "description": "Coming soon on the official picker. The documented testing image is experimental pre-alpha.",
+            "card": {
+              "image_url": "https://projectbluefin.io/characters/utah.webp",
+              "image_alt": "Utah dinosaur artwork",
+              "badge": "Coming soon"
+            }
+          }
+        ]
+      },
+      {
+        "id": "graphics",
+        "label": "Graphics",
+        "values": [
+          {
+            "id": "amd",
+            "label": "AMD"
+          },
+          {
+            "id": "intel",
+            "label": "Intel"
+          }
+        ]
+      },
+      {
+        "id": "desktop",
+        "label": "Desktop",
+        "values": [
+          {
+            "id": "gnome",
+            "label": "GNOME"
+          }
+        ]
+      },
+      {
+        "id": "channel",
+        "label": "Upstream channel",
+        "values": [
+          {
+            "id": "stable",
+            "label": "Stable",
+            "description": "An upstream tag, not evidence of browser build qualification."
+          },
+          {
+            "id": "testing",
+            "label": "Testing",
+            "description": "Experimental preview; no stable Utah image is offered."
+          }
+        ]
+      },
+      {
+        "id": "platform",
+        "label": "Computer architecture",
+        "values": [
+          {
+            "id": "linux/amd64",
+            "label": "x86-64",
+            "description": "Documented upstream architecture; not a live OCI manifest verification."
+          }
+        ]
+      }
+    ],
+    "recommendations": []
+  }
 }

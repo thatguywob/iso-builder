@@ -1,40 +1,64 @@
 # One frontend, deployment-owned configuration
 
-`app/public/builder-config.json` is the portable input for a deployment (v1). The stock
-copy is an exact export of `[iso_builder]` in `tuna-os/tunaOS`'s `tunaos.toml`.
-`builder-config-source.json` records its immutable source commit, path and SHA-256.
-Do not edit the stock projection or generated JavaScript by hand.
+`app/public/builder-config.json` is the portable input for this deployment.
+The stock copy is an exact export of `[iso_builder]` in the primary `tunaos.toml`.
+The receipt in `builder-config-source.json` records the immutable source commit
+and SHA-256 hashes for configuration and flavor metadata. Do not edit these
+exports or generated JavaScript by hand.
 
 To import a reviewed primary export:
 
 ```sh
-node scripts/sync-builder-config.cjs /path/to/iso-builder.config.json --source-commit COMMIT_SHA
+node scripts/sync-builder-config.cjs /path/to/iso-builder.config.json --source-commit COMMIT_SHA --flavors /path/to/iso-builder.flavors.json
 node scripts/generate-builder-config.cjs
+node scripts/generate-guided-catalog.cjs
+node scripts/generate-experiences.cjs
 node scripts/sync-builder-config.cjs --check
 node scripts/generate-builder-config.cjs --check
+node scripts/generate-guided-catalog.cjs --check
+node scripts/generate-experiences.cjs --check
 ```
 
-The importer compares bytes. CI checks the receipt. It does not fetch a branch. The primary repository owns the schema, validation
-and export. The browser validates the same bounded contract before it starts.
-Missing/invalid configuration stops with an explicit error, without stock fallback.
+The importer compares bytes. CI checks the receipt without a network request.
+The primary repository owns the schema, validator and export. The browser
+validates the same contract before it starts. Invalid configuration shows an
+error. It never selects a different brand as a fallback.
 
-Other projects can provide the portable JSON directly, then generate
-`builder-config-data.js` with `--input` and `--output`. They do not need a TunaOS
-checkout or its build matrix. Configuration is deployment-owned; a URL
-cannot load a configuration or change transport policy. See
-[the config-only examples](../examples/README.md).
+## Catalog and questions
 
-Configuration supplies brand text/links/assets, color, displayed desktop and
-variant order, defaults, curated app collections, optional DDI presentation and
-output naming. The catalog remains the authority for offered targets and
-qualification. The UI matches choices to catalog records. If the default is unavailable,
-the UI selects no image. An image reference is only an input
-to existing inspection. Brand configuration never grants relay admission or build support.
+Version 2 supplies paths, facet labels, recommendations and a default leaf ID.
+The catalog uses target keys from CatalogSnapshot v1.
+The snapshot still owns references, availability and qualification. Flavor
+metadata from the primary repository gives explicit desktop and edition IDs.
+The generator reports obsolete, unavailable records that have no primary
+metadata. An available record without metadata is an error.
 
-`preview_only: true` needs a visible disclaimer and blocks inspect/build/DDI
-actions, including direct handler calls and autorun URLs. The Bluefin/Bazzite
-examples exercise the same UI with no copied frontend or borrowed logos.
+The base-first and desktop-first paths use one set of leaves. A path changes
+question order, not identity. A conflict needs an explicit choice to clear
+related answers. An unavailable default selects no other image automatically.
+The advanced form keeps the explicit version 1 adapter for old deployments.
+Manual references are optional advanced inputs.
 
-Flatpak search remains Flathub-only, backed by real metadata. Configuration does
-not add arbitrary remotes. Transport trust, execution behavior, qualification,
-and operation/result provenance remain engine concerns.
+Brand configuration never grants relay access or build support. Preview leaves
+have source evidence but no qualification. `preview_only: true` needs a visible
+disclaimer and blocks inspection, ISO creation, DDI actions and autorun.
+These guards also apply to direct calls from JavaScript.
+
+## Experiences
+
+`app/deployment-experiences.json` lists assets in this repository and a default ID.
+Its generator validates each configuration and preview catalog. The browser
+accepts only a known experience ID. It does not accept a configuration URL.
+
+A switch starts a fresh page and drops other URL overrides. The switch is
+unavailable during inspection, build or save. A fresh visit uses the default;
+the browser does not store a different preference.
+
+Other projects can supply the portable JSON directly. They do not need the
+TunaOS repository or its build matrix. See the config-only
+[examples](../examples/README.md) for the same frontend with alternate data.
+The examples list sources for assets and limits for each license. Fonts are
+local files with OFL notices; the browser makes no external request for fonts.
+
+Flatpak search uses real Flathub metadata. Configuration does not add arbitrary
+remotes. Transport trust and operation receipts remain engine concerns.

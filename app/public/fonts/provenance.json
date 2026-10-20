@@ -1,0 +1,23 @@
+{
+  "license": "SIL Open Font License 1.1",
+  "license_source_commit": "47d54ca1ebb14fd864695f1d39dc734f39017c33",
+  "distribution": "Google Fonts CSS API, normal Latin subset, weights400 through700",
+  "retrieved_at": "2026-10-20T17:39:00Z",
+  "files": [
+    {
+      "path": "inter-latin.woff2",
+      "source": "https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7.woff2",
+      "sha256": "3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62",
+      "license_file": "inter-OFL.txt",
+      "license_source": "https://github.com/google/fonts/blob/47d54ca1ebb14fd864695f1d39dc734f39017c33/ofl/inter/OFL.txt"
+    },
+    {
+      "path": "dm-sans-latin.woff2",
+      "source": "https://fonts.gstatic.com/s/dmsans/v17/rP2Yp2ywxg089UriI5-g4vlH9VoD8Cmcqbu0-K4.woff2",
+      "sha256": "9fea608a947e67020c33cad9a6fe3d60c54119dfb8cff87768a8117a15ed7543",
+      "license_file": "dmsans-OFL.txt",
+      "license_source": "https://github.com/google/fonts/blob/47d54ca1ebb14fd864695f1d39dc734f39017c33/ofl/dmsans/OFL.txt"
+    }
+  ],
+  "license_text_normalization": "LF line endings; trailing whitespace removed; license wording unchanged"
+}

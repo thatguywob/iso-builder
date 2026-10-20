@@ -31,7 +31,7 @@
 
   .site-header { background: var(--header-bg); border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
   .site-header .inner { max-width: 1200px; margin: 0 auto; display: flex; align-items: center; gap: .75rem; padding: .5rem 1rem; }
-  .site-header img { width: 30px; height: 30px; border-radius: 6px; }
+  .site-header img { width: auto; max-width: 150px; height: 30px; object-fit: contain; border-radius: 0; }
   .site-header .brand { font-weight: 700; font-size: 1.15rem; letter-spacing: -0.01em; color: var(--header-fg); text-decoration: none; }
   .site-header nav { margin-left: auto; display: flex; gap: .3rem; flex-wrap: wrap; }
   .site-header nav a { color: var(--header-link); text-decoration: none; font-size: .92rem; font-weight: 500; padding: .4rem .6rem; }
@@ -172,6 +172,53 @@
     .row > div { min-width:0; } .variant-select { max-width:100%; }
     .repohelp { flex-direction:column; } .repohelp input { min-width:0; }
   }
+
+  /* Shared catalog questions. Project policy and artwork come from config. */
+  .guided-paths,.guided-controls,.guided-chips,.guided-breadcrumbs {display:flex;flex-wrap:wrap;gap:.6rem;margin:1rem 0;}
+  .guided-paths [aria-pressed="true"],.guided-breadcrumbs [aria-current="step"] {border-color:var(--accent);color:var(--fg);}
+  .guided-breadcrumbs button {padding:.35rem .6rem;font-size:.8rem;}
+  .guided-selected {border-left:3px solid var(--accent);padding:.7rem 1rem;background:var(--panel-2);}
+  .guided-recommendation {padding:1rem;border:1px solid var(--border);border-radius:10px;margin:1rem 0;}
+  .guided-question {border:0;padding:0;margin:1.2rem 0;min-width:0;}
+  .guided-question legend {font-size:1.3rem;font-weight:600;margin-bottom:.7rem;}
+  .guided-choice-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;}
+  .guided-choice-wrap {min-width:0;}
+  .guided-choice {position:relative;display:flex;gap:.7rem;height:100%;padding:1rem;border:2px solid var(--border);border-radius:12px;background:var(--panel);cursor:pointer;overflow:hidden;}
+  .guided-choice:has(input:focus-visible) {outline:3px solid var(--choice-focus,var(--accent));outline-offset:3px;}
+  .guided-choice.is-selected {border-color:var(--accent);background:var(--choice-selected,var(--panel-2));}
+  .guided-choice:hover {background:var(--choice-hover,var(--panel-2));border-color:var(--choice-focus,var(--accent));}
+  .guided-choice.is-disabled {opacity:.65;cursor:not-allowed;}
+  .guided-choice input {width:1.15rem;height:1.15rem;flex:none;accent-color:var(--accent);margin:.2rem 0;z-index:2;}
+  .guided-choice-copy {display:flex;flex-direction:column;gap:.4rem;min-width:0;overflow-wrap:anywhere;}
+  .guided-choice-copy small {color:var(--dim);font-size:.8rem;}
+  .guided-art-card {min-height:400px;padding:1rem;align-items:flex-end;}
+  .guided-art-card img {position:absolute;inset:0;width:100%;height:100%;object-fit:contain;}
+  .guided-art-card::after {content:"";position:absolute;inset:0;background:linear-gradient(rgba(0,0,0,.15),rgba(0,0,0,.4) 30%,rgba(0,0,0,.92));}
+  .guided-art-card .guided-choice-copy {z-index:1;color:white;}
+  .guided-art-card .guided-choice-copy small {color:#ddd;}
+  .guided-card-badge {position:absolute;right:10px;top:10px;z-index:2;border:1px solid #ffffff33;background:#0009;border-radius:6px;padding:5px 10px;color:white;font-size:.8rem;}
+  .guided-next,.guided-use {background:var(--accent);color:var(--accent-ink);font-weight:600;}
+  .guided-leaf {border:1px solid var(--border);border-radius:10px;padding:1rem;margin:.8rem 0;overflow-wrap:anywhere;}
+  .guided-leaf h3 {margin-top:0;}
+  .guided-leaf code {white-space:normal;overflow-wrap:anywhere;}
+  .guided-conflict {padding:1rem;border:1px solid var(--warn);border-radius:10px;}
+  .guided-resolved {padding-left:1.2rem;color:var(--dim);font-size:.85rem;}
+  @media(max-width:480px){.guided-choice-grid{grid-template-columns:1fr;}.guided-art-card{min-height:360px;}.guided-controls button{max-width:100%;white-space:normal;}}
+  [data-choice-style="thumbnail"] .guided-art-card {min-height:290px;display:flex;flex-direction:column;align-items:center;padding:0 0 14px;gap:0;border-radius:10px;}
+  [data-choice-style="thumbnail"] .guided-art-card img {position:static;height:235px;flex:none;}
+  [data-choice-style="thumbnail"] .guided-art-card::after {display:none;}
+  [data-choice-style="thumbnail"] .guided-art-card input {position:absolute;left:12px;top:12px;}
+  [data-choice-style="thumbnail"] .guided-choice-copy {text-align:center;align-items:center;padding:0 12px;color:var(--fg);}
+  [data-choice-style="thumbnail"] .guided-choice-copy small {color:var(--dim);}
+  .guided-ack {display:flex;align-items:flex-start;gap:.6rem;margin:1rem 0;font-weight:400;}
+  .guided-ack input {width:1.2rem;height:1.2rem;flex:none;margin-top:.2rem;}
+  .experience-switcher {margin-bottom:1.5rem;}
+  .experience-switcher select {max-width:100%;min-height:44px;font:inherit;color:var(--fg);background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:.5rem;}
+  .experience-switcher .helper {font-size:.8rem;margin:.3rem 0;}
+  @font-face {font-family:"Builder Inter";font-style:normal;font-weight:400 700;font-display:swap;src:url("fonts/inter-latin.woff2") format("woff2");}
+  @font-face {font-family:"Builder DM Sans";font-style:normal;font-weight:400 700;font-display:swap;src:url("fonts/dm-sans-latin.woff2") format("woff2");}
+  [data-font-family="inter"] body {font-family:"Builder Inter",system-ui,sans-serif;}
+  [data-font-family="dm-sans"] body {font-family:"Builder DM Sans",system-ui,sans-serif;}
 </style>
 </head>
 <body>
@@ -182,6 +229,7 @@
   </div>
 </header>
 <main>
+  <div class="experience-switcher"><label for="experience">Experience</label><select id="experience" aria-describedby="experience-help"></select><p id="experience-help" class="helper">Changing experience starts a new setup. Finish any build or save first.</p></div>
   <span class="eyebrow">ISO builder</span>
   <h1>Make your own image</h1>
   <p id="builder-intro" class="sub"></p>
@@ -209,6 +257,7 @@
     </div>
     </details>
     <p id="selection-summary" class="helper"></p>
+    <div id="guided-picker" hidden></div>
     <div class="editions" id="editions" role="group" aria-label="Desktop choices"></div>
     <details id="custom-image-options">
       <summary>Use a custom container image</summary>
@@ -378,6 +427,11 @@
 <script src="build-result.js"></script>
 <script src="builder-config.js"></script>
 <script src="builder-config-data.js"></script>
+<script src="guided-catalog.js"></script>
+<script src="guided-catalog-data.js"></script>
+<script src="guided-picker.js"></script>
+<script src="experience-data.js"></script>
+<script src="experiences.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

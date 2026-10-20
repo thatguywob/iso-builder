@@ -10,6 +10,7 @@
 // heavy (real image in browser memory); off by default in CI.
 
 const { test, expect } = require("./fixtures");
+require('./legacy-deployment').useLegacyDeployment(test);
 const path = require("path");
 const fs = require("fs");
 const { qualifiedCatalogFixture } = require("./qualified-catalog-fixture");

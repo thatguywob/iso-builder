@@ -1,6 +1,6 @@
 // Generated from builder-config.json; do not edit.
 globalThis.TBOX_BUILDER_CONFIG = {
-  "schema_version": 1,
+  "schema_version": 2,
   "preview_only": false,
   "brand": {
     "name": "TunaOS",
@@ -20,16 +20,12 @@ globalThis.TBOX_BUILDER_CONFIG = {
     "filename_prefix": "tunaos"
   },
   "default_selection": {
-    "kind": "catalog",
-    "variant": "yellowfin",
-    "flavor": "gnome",
-    "platform": "linux/amd64/v2"
+    "kind": "leaf",
+    "leaf_id": "yellowfin:gnome:linux/amd64/v2"
   },
   "desktops": [
     {
       "id": "gnome",
-      "name": "GNOME",
-      "description": "A clean, focused desktop with an app overview.",
       "default_flatpaks": [
         "io.github.kolunmi.Bazaar",
         "org.mozilla.firefox",
@@ -38,8 +34,6 @@ globalThis.TBOX_BUILDER_CONFIG = {
     },
     {
       "id": "kde",
-      "name": "KDE Plasma",
-      "description": "A familiar layout with a taskbar and lots of customization.",
       "default_flatpaks": [
         "io.github.kolunmi.Bazaar",
         "org.mozilla.firefox",
@@ -48,8 +42,6 @@ globalThis.TBOX_BUILDER_CONFIG = {
     },
     {
       "id": "cosmic",
-      "name": "COSMIC",
-      "description": "Flexible workspaces with optional window tiling.",
       "default_flatpaks": [
         "io.github.kolunmi.Bazaar",
         "org.mozilla.firefox"
@@ -57,8 +49,6 @@ globalThis.TBOX_BUILDER_CONFIG = {
     },
     {
       "id": "niri",
-      "name": "Niri",
-      "description": "A scrolling, keyboard-focused window layout.",
       "default_flatpaks": [
         "io.github.kolunmi.Bazaar",
         "org.mozilla.firefox"
@@ -66,8 +56,6 @@ globalThis.TBOX_BUILDER_CONFIG = {
     },
     {
       "id": "xfce",
-      "name": "XFCE",
-      "description": "A lightweight, traditional desktop.",
       "default_flatpaks": [
         "io.github.kolunmi.Bazaar",
         "org.mozilla.firefox",
@@ -75,44 +63,193 @@ globalThis.TBOX_BUILDER_CONFIG = {
       ]
     }
   ],
-  "variants": [
-    {
-      "id": "yellowfin",
-      "name": "AlmaLinux Kitten 10 (flagship)"
-    },
-    {
-      "id": "bonito",
-      "name": "Fedora 44"
-    },
-    {
-      "id": "sailfin",
-      "name": "openSUSE Tumbleweed"
-    },
-    {
-      "id": "flounder",
-      "name": "Debian 13 Trixie"
-    },
-    {
-      "id": "grouper",
-      "name": "Ubuntu 26.04"
-    },
-    {
-      "id": "marlin",
-      "name": "Arch Linux"
-    },
-    {
-      "id": "skipjack",
-      "name": "CentOS Stream 10"
-    },
-    {
-      "id": "albacore",
-      "name": "AlmaLinux 10"
-    },
-    {
-      "id": "guppy",
-      "name": "Gentoo (source-based)"
-    }
-  ],
+  "selection": {
+    "default_path": "desktop-first",
+    "paths": [
+      {
+        "id": "desktop-first",
+        "label": "Start with a desktop",
+        "facets": [
+          "desktop",
+          "base",
+          "edition",
+          "hardware",
+          "platform"
+        ]
+      },
+      {
+        "id": "base-first",
+        "label": "Start with a base",
+        "facets": [
+          "base",
+          "desktop",
+          "edition",
+          "hardware",
+          "platform"
+        ]
+      }
+    ],
+    "facets": [
+      {
+        "id": "desktop",
+        "label": "Desktop",
+        "values": [
+          {
+            "id": "gnome",
+            "label": "GNOME",
+            "description": "A clean, focused desktop with an app overview."
+          },
+          {
+            "id": "kde",
+            "label": "KDE Plasma",
+            "description": "A familiar layout with a taskbar and lots of customization."
+          },
+          {
+            "id": "cosmic",
+            "label": "COSMIC",
+            "description": "Flexible workspaces with optional window tiling."
+          },
+          {
+            "id": "niri",
+            "label": "Niri",
+            "description": "A scrolling, keyboard-focused window layout."
+          },
+          {
+            "id": "xfce",
+            "label": "XFCE",
+            "description": "A lightweight, traditional desktop."
+          }
+        ]
+      },
+      {
+        "id": "base",
+        "label": "Base",
+        "values": [
+          {
+            "id": "yellowfin",
+            "label": "AlmaLinux Kitten 10 (flagship)"
+          },
+          {
+            "id": "bonito",
+            "label": "Fedora 44"
+          },
+          {
+            "id": "sailfin",
+            "label": "openSUSE Tumbleweed"
+          },
+          {
+            "id": "flounder",
+            "label": "Debian 13 Trixie"
+          },
+          {
+            "id": "grouper",
+            "label": "Ubuntu 26.04"
+          },
+          {
+            "id": "marlin",
+            "label": "Arch Linux"
+          },
+          {
+            "id": "skipjack",
+            "label": "CentOS Stream 10"
+          },
+          {
+            "id": "albacore",
+            "label": "AlmaLinux 10"
+          },
+          {
+            "id": "guppy",
+            "label": "Gentoo (source-based)"
+          }
+        ]
+      },
+      {
+        "id": "edition",
+        "label": "Image edition",
+        "values": [
+          {
+            "id": "standard",
+            "label": "Standard"
+          },
+          {
+            "id": "hwe",
+            "label": "Hardware enablement"
+          },
+          {
+            "id": "nvidia",
+            "label": "NVIDIA"
+          },
+          {
+            "id": "nvidia-hwe",
+            "label": "NVIDIA hardware enablement"
+          },
+          {
+            "id": "asahi",
+            "label": "Apple Silicon"
+          },
+          {
+            "id": "t2",
+            "label": "Apple T2"
+          },
+          {
+            "id": "zfs",
+            "label": "ZFS"
+          },
+          {
+            "id": "cachyos",
+            "label": "CachyOS kernel"
+          }
+        ]
+      },
+      {
+        "id": "hardware",
+        "label": "Computer type",
+        "values": [
+          {
+            "id": "generic",
+            "label": "Generic computer"
+          },
+          {
+            "id": "apple-silicon",
+            "label": "Apple Silicon"
+          },
+          {
+            "id": "apple-t2",
+            "label": "Apple T2"
+          }
+        ]
+      },
+      {
+        "id": "platform",
+        "label": "Computer architecture",
+        "values": [
+          {
+            "id": "linux/amd64",
+            "label": "x86-64"
+          },
+          {
+            "id": "linux/amd64/v2",
+            "label": "x86-64 v2"
+          },
+          {
+            "id": "linux/amd64/v3",
+            "label": "x86-64 v3"
+          },
+          {
+            "id": "linux/arm64",
+            "label": "ARM64"
+          }
+        ]
+      }
+    ],
+    "recommendations": [
+      {
+        "leaf_id": "yellowfin:gnome:linux/amd64/v2",
+        "label": "Recommended starting point",
+        "reason": "The flagship base with the GNOME desktop. Check your target computer architecture before continuing."
+      }
+    ]
+  },
   "curated_app_sets": [
     {
       "id": "bluefin-system",

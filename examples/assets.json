@@ -1,0 +1,111 @@
+{
+  "checked_at": "2026-10-20",
+  "scope": "Local unofficial demos only. References are not claims of artwork ownership or blanket Apache licensing.",
+  "assets": [
+    {
+      "url": "https://projectbluefin.io/characters/leaping.webp",
+      "alt": "Bluefin Classic dinosaur artwork",
+      "source_url": "https://projectbluefin.io/#scene-picker",
+      "checked_at": "2026-10-20",
+      "delivery": "official-URL-reference-only",
+      "license_note": "Official website source verified; exact transformed asset license/provenance not established. No asset bytes redistributed."
+    },
+    {
+      "url": "https://projectbluefin.io/characters/dakota.webp",
+      "alt": "Dakota dinosaur artwork",
+      "source_url": "https://projectbluefin.io/#scene-picker",
+      "checked_at": "2026-10-20",
+      "delivery": "official-URL-reference-only",
+      "license_note": "Official website source verified; exact transformed asset license/provenance not established. No asset bytes redistributed."
+    },
+    {
+      "url": "https://projectbluefin.io/characters/utah.webp",
+      "alt": "Utah dinosaur artwork",
+      "source_url": "https://projectbluefin.io/#scene-picker",
+      "checked_at": "2026-10-20",
+      "delivery": "official-URL-reference-only",
+      "license_note": "Official website source verified; exact transformed asset license/provenance not established. No asset bytes redistributed."
+    },
+    {
+      "url": "https://bazzite.gg/content/uploads/2026/09/desktop-laptop.webp",
+      "alt": "Desktop and laptop computers",
+      "source_url": "https://bazzite.gg/#download",
+      "checked_at": "2026-10-20",
+      "delivery": "official-URL-reference-only",
+      "license_note": "Official website source verified; individual asset license not verified. No asset bytes redistributed."
+    },
+    {
+      "url": "https://bazzite.gg/content/uploads/2026/09/htpc.webp",
+      "alt": "Home theater gaming computer",
+      "source_url": "https://bazzite.gg/#download",
+      "checked_at": "2026-10-20",
+      "delivery": "official-URL-reference-only",
+      "license_note": "Official website source verified; individual asset license not verified. No asset bytes redistributed."
+    },
+    {
+      "url": "https://bazzite.gg/content/uploads/2026/09/handheld.webp",
+      "alt": "Handheld gaming computer",
+      "source_url": "https://bazzite.gg/#download",
+      "checked_at": "2026-10-20",
+      "delivery": "official-URL-reference-only",
+      "license_note": "Official website source verified; individual asset license not verified. No asset bytes redistributed."
+    },
+    {
+      "url": "https://bazzite.gg/content/uploads/2026/09/amd-intel3.svg",
+      "alt": "AMD and Intel graphics",
+      "source_url": "https://bazzite.gg/#download",
+      "checked_at": "2026-10-20",
+      "delivery": "official-URL-reference-only",
+      "license_note": "Official website source verified; individual asset license not verified. No asset bytes redistributed."
+    },
+    {
+      "url": "https://bazzite.gg/content/uploads/2026/09/nvidia.svg",
+      "alt": "NVIDIA graphics",
+      "source_url": "https://bazzite.gg/#download",
+      "checked_at": "2026-10-20",
+      "delivery": "official-URL-reference-only",
+      "license_note": "Official website source verified; individual asset license not verified. No asset bytes redistributed."
+    },
+    {
+      "url": "https://bazzite.gg/content/uploads/2026/09/rtx.svg",
+      "alt": "Newer NVIDIA graphics",
+      "source_url": "https://bazzite.gg/#download",
+      "checked_at": "2026-10-20",
+      "delivery": "official-URL-reference-only",
+      "license_note": "Official website source verified; individual asset license not verified. No asset bytes redistributed."
+    },
+    {
+      "url": "https://bazzite.gg/content/uploads/2026/09/gtx.svg",
+      "alt": "Older NVIDIA graphics",
+      "source_url": "https://bazzite.gg/#download",
+      "checked_at": "2026-10-20",
+      "delivery": "official-URL-reference-only",
+      "license_note": "Official website source verified; individual asset license not verified. No asset bytes redistributed."
+    },
+    {
+      "url": "https://bazzite.gg/content/uploads/2026/09/kde-desktop.webp",
+      "alt": "KDE Plasma desktop preview",
+      "source_url": "https://bazzite.gg/#download",
+      "checked_at": "2026-10-20",
+      "delivery": "official-URL-reference-only",
+      "license_note": "Official website source verified; individual asset license not verified. No asset bytes redistributed."
+    },
+    {
+      "url": "https://bazzite.gg/content/uploads/2026/09/gnome-desktop.webp",
+      "alt": "GNOME desktop preview",
+      "source_url": "https://bazzite.gg/#download",
+      "checked_at": "2026-10-20",
+      "delivery": "official-URL-reference-only",
+      "license_note": "Official website source verified; individual asset license not verified. No asset bytes redistributed."
+    },
+    {
+      "url": "https://bazzite.gg/content/uploads/2024/02/Bazzite_Color_Long.svg",
+      "alt": "Bazzite wordmark",
+      "source_url": "https://github.com/ublue-os/bazzite/blob/main/press_kit/Bazzite_Color_Long.svg",
+      "checked_at": "2026-10-20",
+      "delivery": "official-URL-reference-only",
+      "license_note": "Apache-2.0 verified for the press-kit logo; preserve original aspect ratio/colors. Official website URL referenced, no bytes redistributed.",
+      "usage_guidance": "https://github.com/ublue-os/bazzite/blob/main/press_kit/README.md"
+    }
+  ]
+}
