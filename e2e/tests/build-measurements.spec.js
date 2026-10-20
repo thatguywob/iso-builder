@@ -4,10 +4,13 @@ const path = require("node:path");
 const os = require("node:os");
 const crypto = require("node:crypto");
 const vm = require("node:vm");
+const { observedBuildFixture } = require("./observed-build-fixture");
 const {
   observeLoadedWasm,
   loadedWasmMeasurement,
   hashSavedIso,
+  buildOperationIdentity,
+  completedBuildResult,
   diagnosticRecord,
 } = require("./build-measurements");
 
@@ -225,10 +228,13 @@ test.describe("native WASM diagnostic observation", () => {
         iso: await hashSavedIso(filename, tinyIso.length),
         wasm: await loadedWasmMeasurement(page), browser,
         phasesMs: { inspect: 0, build: 0, save: 0 },
+        buildResult: observedBuildFixture(tinyIso.length),
       });
       expect(record.iso).toEqual({ sha256: digest(tinyIso), sizeBytes: tinyIso.length });
       expect(record.loadedWasm).toEqual({ sha256: digest(WASM), sizeBytes: WASM.length });
       expect(record.browser).toEqual({ product: browser.product, userAgent: browser.userAgent });
+      expect(record.engineBuildResult).toEqual(observedBuildFixture(tinyIso.length));
+      expect(record.missingIdentity).toEqual(["producer", "frontend"]);
       expect(record.kind).toBe("diagnostic-build-measurements");
       expect(record.qualification).toBe("not-assessed");
     } finally {
@@ -347,6 +353,29 @@ function validRecord() {
   };
 }
 
+test.describe("diagnostic operation binding", () => {
+  function fixture() {
+    const state = { tboxCurrentOperation: { id: 1, buildAttempt: 2, state: "completed", buildResult: observedBuildFixture() } };
+    const context = vm.createContext(state);
+    return { state, page: { evaluate: async (fn, arg) => vm.runInContext(`(${fn.toString()})(${JSON.stringify(arg)})`, context) } };
+  }
+  test("snapshot identity stays bound to the same completed attempt", async () => {
+    const { page } = fixture(); const identity = await buildOperationIdentity(page);
+    expect(await completedBuildResult(page, identity)).toEqual(observedBuildFixture());
+  });
+  for (const change of ["operation", "attempt", "invalidated", "building"]) {
+    test(`rejects ${change} drift even when a new result has the same output size`, async () => {
+      const { state, page } = fixture(); const identity = await buildOperationIdentity(page);
+      if (change === "operation") state.tboxCurrentOperation.id++;
+      if (change === "attempt") state.tboxCurrentOperation.buildAttempt++;
+      if (change === "invalidated") state.tboxCurrentOperation.buildAttempt = null;
+      if (change === "building") state.tboxCurrentOperation.state = "building";
+      state.tboxCurrentOperation.buildResult = observedBuildFixture();
+      await expect(completedBuildResult(page, identity)).rejects.toThrow(/changed|completed/);
+    });
+  }
+});
+
 test.describe("diagnostic record validation", () => {
   test("preserves a valid CDP HeadlessChrome product without normalization", () => {
     const input = validRecord();
@@ -367,13 +396,40 @@ test.describe("diagnostic record validation", () => {
     expect(record.iso).toEqual({ sha256: input.iso.sha256, sizeBytes: 32 });
     expect(record.loadedWasm).toEqual({ sha256: input.wasm.sha256, sizeBytes: 8 });
     expect(record.iso.sha256).not.toBe(record.loadedWasm.sha256);
+    expect(record.engineBuildResult).toBeNull();
+    expect(record.missingIdentity).toEqual(["producer", "frontend"]);
     expect(record.browser).toEqual(input.browser);
     expect(record.phasesMs).toEqual(input.phasesMs);
     expect(record.timingNote).toMatch(/no performance qualification/);
     expect(Object.keys(record).sort()).toEqual([
-      "schemaVersion", "kind", "qualification", "iso", "loadedWasm", "browser", "phasesMs", "timingNote",
+      "schemaVersion", "kind", "qualification", "iso", "loadedWasm", "engineBuildResult", "missingIdentity", "browser", "phasesMs", "timingNote",
     ].sort());
   });
+
+  test("joins exact operation result only when its output count matches independently saved bytes", () => {
+    const input = validRecord(); input.buildResult = observedBuildFixture(input.iso.sizeBytes);
+    const record = diagnosticRecord(input);
+    expect(record.engineBuildResult).toEqual(input.buildResult);
+    expect(record.qualification).toBe("not-assessed");
+    expect(record.missingIdentity).toEqual(["producer", "frontend"]);
+    input.buildResult.bytesWritten++;
+    expect(() => diagnosticRecord(input)).toThrow(/byte count/);
+    expect(record.engineBuildResult.bytesWritten).toBe(32);
+  });
+  test("ignores requested identity and keeps unsupported-engine observations absent", () => {
+    const input = validRecord();
+    input.request = { resolvedInputs: { platformManifestDigest: `sha256:${"2".repeat(64)}` } };
+    input.producerIdentity = "claimed producer"; input.frontendIdentity = "claimed frontend";
+    const record = diagnosticRecord(input);
+    expect(record.engineBuildResult).toBeNull();
+    expect(record.missingIdentity).toEqual(["producer", "frontend"]);
+    expect(record.request).toBeUndefined();
+  });
+  for (const bad of [false, 4, {}, { bytesWritten: 32 }]) {
+    test(`rejects malformed operation observations ${JSON.stringify(bad)}`, () => {
+      expect(() => diagnosticRecord({ ...validRecord(), buildResult: bad })).toThrow();
+    });
+  }
 
   for (const role of ["iso", "wasm"]) {
     for (const value of [null, true, 0, -1, 1.5, "8", NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
@@ -455,6 +511,9 @@ test.describe("diagnostic wiring boundaries", () => {
     const measured = full.indexOf("await hashSavedIso(out, size)");
     expect(measured).toBeGreaterThan(-1);
     expect(measured).toBeLessThan(full.indexOf("fs.unlinkSync(out)"));
+    expect(full.indexOf("buildIdentity = await buildOperationIdentity(page)")).toBeLessThan(full.indexOf("dl = await Promise.race"));
+    expect(full.indexOf("const buildResult = await completedBuildResult(page, buildIdentity)")).toBeLessThan(measured);
+    expect(full.indexOf("expect(await completedBuildResult(page, buildIdentity)).toEqual(buildResult)")).toBeGreaterThan(measured);
     expect(full).toMatch(/if \(process\.env\.TBOX_E2E_ISO_COPY\)\s*\{\s*const retained = await hashSavedIso\(process\.env\.TBOX_E2E_ISO_COPY, size\);\s*expect\(retained\)\.toEqual\(iso\);/);
   });
 });

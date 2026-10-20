@@ -1,6 +1,7 @@
 // Test-only observations. These do not authenticate a producer or qualify media.
 const fs = require("node:fs");
 const crypto = require("node:crypto");
+const { validateBuildResult } = require("../../app/public/build-result");
 
 // Passed directly to addInitScript: keep browser code self-contained.
 function observeLoadedWasm() {
@@ -93,7 +94,32 @@ async function hashSavedIso(filename, expectedSize) {
   } finally { await file.close(); }
 }
 
-function diagnosticRecord({ iso, wasm, browser, phasesMs }) {
+async function buildOperationIdentity(page) {
+  return page.evaluate(() => {
+    const op = globalThis.tboxCurrentOperation;
+    if (!op || !Number.isSafeInteger(op.id) || !Number.isSafeInteger(op.buildAttempt)) {
+      throw new Error("an active browser build attempt is required");
+    }
+    return { operationId: op.id, attempt: op.buildAttempt };
+  });
+}
+
+async function completedBuildResult(page, expectedIdentity = null) {
+  return page.evaluate(expected => {
+    const op = globalThis.tboxCurrentOperation;
+    if (!op || op.state !== "completed" || !Number.isSafeInteger(op.buildAttempt)) {
+      throw new Error("a completed browser build is required");
+    }
+    if (expected && (op.id !== expected.operationId || op.buildAttempt !== expected.attempt)) {
+      throw new Error("browser build operation changed during measurement");
+    }
+    // null is intentional for an older engine. Catalog/request identities are
+    // never a substitute for the engine's operation-local observations.
+    return op.buildResult ?? null;
+  }, expectedIdentity);
+}
+
+function diagnosticRecord({ iso, wasm, browser, phasesMs, buildResult = null }) {
   for (const value of [iso, wasm]) {
     if (!value || typeof value.sha256 !== "string" || !/^sha256:[0-9a-f]{64}$/.test(value.sha256) || !Number.isSafeInteger(value.sizeBytes) || value.sizeBytes <= 0) {
       throw new Error("invalid byte measurement");
@@ -108,10 +134,12 @@ function diagnosticRecord({ iso, wasm, browser, phasesMs }) {
     schemaVersion: 1, kind: "diagnostic-build-measurements", qualification: "not-assessed",
     iso: { sha256: iso.sha256, sizeBytes: iso.sizeBytes },
     loadedWasm: { sha256: wasm.sha256, sizeBytes: wasm.sizeBytes },
+    engineBuildResult: buildResult === null ? null : validateBuildResult(buildResult, iso.sizeBytes),
+    missingIdentity: ["producer", "frontend"],
     browser: { product: browser.product, userAgent: browser.userAgent },
     phasesMs: { inspect: phasesMs.inspect, build: phasesMs.build, save: phasesMs.save },
     timingNote: "Existing stage durations exclude navigation and include observer overhead where it overlaps; no performance qualification.",
   };
 }
 
-module.exports = { observeLoadedWasm, loadedWasmMeasurement, hashSavedIso, diagnosticRecord };
+module.exports = { observeLoadedWasm, loadedWasmMeasurement, hashSavedIso, buildOperationIdentity, completedBuildResult, diagnosticRecord };

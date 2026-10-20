@@ -13,7 +13,7 @@ const { test, expect } = require("./fixtures");
 const path = require("path");
 const fs = require("fs");
 const { qualifiedCatalogFixture } = require("./qualified-catalog-fixture");
-const { observeLoadedWasm, loadedWasmMeasurement, hashSavedIso, diagnosticRecord } = require("./build-measurements");
+const { observeLoadedWasm, loadedWasmMeasurement, hashSavedIso, buildOperationIdentity, completedBuildResult, diagnosticRecord } = require("./build-measurements");
 const CATALOG = require("../../app/public/catalog-snapshot.json");
 
 const SHOTS = process.env.TBOX_E2E_SHOTS
@@ -543,10 +543,12 @@ test.describe("iso builder", () => {
 
     const buildWatch = watch("build", BUILD_STALL_MS);
     let dl;
+    let buildIdentity;
     try {
       const download = page.waitForEvent("download", { timeout: WAIT_MS });
       const buildClickedAt = performance.now();
       await page.locator("#build").click();
+      buildIdentity = await buildOperationIdentity(page);
       await shot(page, "05-building.png");
       dl = await Promise.race([download, buildWatch.promise]);
       phases.buildMs = performance.now() - buildClickedAt;
@@ -579,6 +581,7 @@ test.describe("iso builder", () => {
     fs.closeSync(fd);
     expect(buf.toString("latin1", 1, 6)).toBe("CD001");
     await expect(page.locator("#stage")).toContainText(/Done/, { timeout: 120_000 });
+    const buildResult = await completedBuildResult(page, buildIdentity);
     await shot(page, "06-done.png");
     // Browser half of QualificationEvidence v1. The guest half (LUKS
     // install + reboot) is appended by the CI step running iso-e2e.sh;
@@ -632,8 +635,9 @@ test.describe("iso builder", () => {
     fs.mkdirSync(path.dirname(evPath), { recursive: true });
     fs.writeFileSync(evPath, `${JSON.stringify(evidence, null, 2)}\n`);
     console.log("wrote browser evidence:", evPath);
-    // Separate diagnostics from legacy evidence. No source/overlay identity is
-    // inferred from the catalog; v2 emission requires a later engine contract.
+    // Join operation-local engine observations only to independently measured
+    // saved ISO and loaded WASM bytes. Producer/frontend identity is still absent;
+    // keep this diagnostic separate from qualification evidence.
     const wasm = await loadedWasmMeasurement(page);
     const iso = await hashSavedIso(out, size);
     if (process.env.TBOX_E2E_ISO_COPY) {
@@ -644,8 +648,9 @@ test.describe("iso builder", () => {
     let browserVersion;
     try { browserVersion = await session.send("Browser.getVersion"); }
     finally { await session.detach(); }
+    expect(await completedBuildResult(page, buildIdentity)).toEqual(buildResult);
     const measurements = diagnosticRecord({
-      iso, wasm, browser: browserVersion,
+      iso, wasm, browser: browserVersion, buildResult,
       phasesMs: { inspect: phases.inspectMs, build: phases.buildMs, save: phases.saveMs },
     });
     const measurementPath = path.join(path.dirname(evPath), `build-measurements-${path.basename(evPath)}`);
