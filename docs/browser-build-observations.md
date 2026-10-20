@@ -82,6 +82,19 @@ It does not need a browser.
 `build-measurements.spec.js` checks byte measurements and the diagnostic join.
 These fixtures cannot boot.
 
+`observed-engine-browser.spec.js` loads the production WASM artifact in Chromium.
+It serves a small OCI fixture through a test route and uses real OPFS.
+It checks observed digests, saved byte counts, busy reset rejection, failed
+and cancelled sinks, recovery, and reset cleanup. The fixture has fake kernel,
+initramfs and EFI files. A successful test does not prove boot or installation.
+The PR e2e job runs this test without the `@full` filter.
+
+A full candidate needs a separate workflow dispatch with `run_full: true`.
+The `only` input selects an edition. `keep_iso: true` uploads the ISO to R2
+only after the guest test succeeds. If that guest test fails, the workflow
+does not retain the ISO for a later test. The guest harness still uses the
+existing pin. Candidate retention and a strict harness need separate work.
+
 Run the focused suite from `e2e` with the installed Playwright dependency:
 
 ```sh

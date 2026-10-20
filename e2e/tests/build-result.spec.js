@@ -132,6 +132,7 @@ async function failed(page) {
 }
 
 test.describe("browser result lifecycle", () => {
+  test.describe.configure({ timeout: 30_000 });
   test("result remains private until sink close, then publishes an immutable copy", async ({ page }) => {
     await readyPage(page);
     await page.evaluate(() => { window.__pauseClose = true; });
@@ -210,7 +211,13 @@ test.describe("browser result lifecycle", () => {
     await page.evaluate(() => { window.__pauseClose = true; });
     await page.locator("#build").click();
     await page.waitForFunction(() => window.__resumeClose);
-    await page.locator("#label").fill("CHANGED");
+    await expect(page.locator("#label")).toBeDisabled();
+    // Normal controls stay locked. Simulate an external/programmatic edit
+    // to exercise the stale-result guard without waiting for editability.
+    await page.locator("#label").evaluate(el => {
+      el.value = "CHANGED";
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
     await page.evaluate(() => window.__resumeClose());
     await failed(page);
   });
