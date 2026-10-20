@@ -612,7 +612,7 @@ test.describe("experimental owned dedicated worker transport", () => {
         if (command.method === failedControl) throw new Error("owned safety control rejected");
       };
       await attachWorker(page);
-      await expect(observer.finish()).rejects.toThrow(/owned safety control rejected/);
+      await expect(observer.finish()).rejects.toThrow(/worker CDP command rejected/);
       expect(page.session.workerCommands.some(command => ["Network.enable", "Runtime.runIfWaitingForDebugger"].includes(command.method))).toBe(false);
     });
   }
@@ -629,7 +629,7 @@ test.describe("experimental owned dedicated worker transport", () => {
       }
     };
     await attachWorker(page);
-    await expect(observer.finish()).rejects.toThrow(/delayed cache control rejection/);
+    await expect(observer.finish()).rejects.toThrow(/worker CDP command rejected/);
   });
 
   for (const missing of ["start", "headers", "completion"]) {
@@ -641,8 +641,158 @@ test.describe("experimental owned dedicated worker transport", () => {
     });
   }
 
-  // Falsification: diagnostic-only changes cannot repair or hide an orphan.
-  // Capture bounded opaque identities, never request/response payload fields.
+  // Falsification: diagnostics cannot repair an orphan, missing response, cache
+  // rejection or failed lifecycle. Later traffic cannot rewrite a frozen trace;
+  // URL/query/header/body fields and malformed IDs must never enter its snapshot.
+  const assertTrace = error => {
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message.match(/; identityTrace=/g)).toHaveLength(1);
+    const trace = error.identityTrace;
+    expect(trace).toEqual(JSON.parse(error.message.split("; identityTrace=")[1]));
+    expect(Object.isFrozen(trace)).toBe(true);
+    expect(Object.isFrozen(trace.recent)).toBe(true);
+    expect(trace.recent.length).toBeLessThanOrEqual(32);
+    for (const identity of trace.recent) {
+      expect(Object.isFrozen(identity)).toBe(true);
+      expect(Object.keys(identity).sort()).toEqual(["method", "requestId", "sessionId", "source", "targetId"]);
+    }
+    return trace;
+  };
+
+  test("missing worker response completion freezes a bounded redacted failure trace", async () => {
+    const { page, observer, emit } = await setup({ experimentalDedicatedWorkers: true });
+    emit();
+    const targetId = "worker?secret=target-marker", sessionId = "session?secret=session-marker";
+    await attachWorker(page, { targetId, sessionId });
+    const noise = prefix => {
+      for (let i = 0; i < 24; i++) {
+        const requestId = `${prefix}-${i}`, url = `${ORIGIN}/data?secret=query-marker`;
+        page.session.emit("Network.requestWillBeSent", { requestId, type: "Other",
+          request: { url, method: "GET", headers: { authorization: "header-marker" }, postData: "body-marker" } });
+        page.session.emit("Network.responseReceived", { requestId, type: "Other",
+          response: { url, status: 200, headers: { "x-secret": "response-header-marker" }, mimeType: "application/octet-stream" } });
+        page.session.emit("Network.loadingFinished", { requestId });
+      }
+    };
+    noise("before");
+    page.session.emit("Network.requestWillBeSent", { requestId: targetId, type: "Other",
+      request: { url: `${WORKER_URL}?secret=worker-url-marker`, method: "GET" } });
+    const completion = { requestId: targetId, url: "completion-url-marker",
+      headers: { authorization: "completion-header-marker" }, body: "completion-body-marker" };
+    childEvent(page, "Network.loadingFinished", completion, sessionId);
+    completion.requestId = "replaced-after-failure";
+    noise("after");
+    const error = await observer.finish().then(() => null, error => error);
+    expect(error.message).toContain("frontend request completed without an owned response;");
+    expect(error.stack).toContain("cdpComplete");
+    const trace = assertTrace(error);
+    expect(trace.recent).toHaveLength(32);
+    expect(trace).toMatchObject({ method: "Network.loadingFinished", requestId: "[redacted]",
+      source: "worker", sessionId: "[redacted]", targetId: "[redacted]", ownerTargetId: "owned-page" });
+    expect(trace.recent.at(-1)).toMatchObject({ method: "Network.loadingFinished", requestId: "[redacted]" });
+    expect(trace.recent.some(identity => identity.requestId === "before-0" || identity.requestId?.startsWith("after-"))).toBe(false);
+    expect(error.message.length).toBeLessThan(16 * 1024);
+    for (const marker of ["http:", "secret=", "target-marker", "session-marker", "query-marker", "worker-url-marker",
+      "header-marker", "body-marker", "completion-url-marker", "replaced-after-failure"]) expect(error.message).not.toContain(marker);
+    expect(await observer.finish().catch(error => error)).toBe(error);
+    expect(page.session.workerCommands.some(command => command.method === "Network.getResponseBody")).toBe(false);
+    expect(page.session.calls.some(call => call.method === "Network.loadNetworkResource")).toBe(false);
+  });
+
+  for (const phase of ["response", "body", "snapshot", "worker coverage", "drain", "timeout", "dispose", "disposed"]) {
+    test(`collector ${phase} rejection includes one frozen identity trace`, async () => {
+      const { page, observer, emit } = await setup({ experimentalDedicatedWorkers: true, timeoutMs: 15 });
+      let release;
+      emit(phase === "response" ? { status: 201 } : phase === "body" ? {
+        read: async () => { throw new Error("tiny body unavailable"); },
+      } : phase === "timeout" ? { read: () => new Promise(resolve => { release = resolve; }) } :
+        phase === "snapshot" ? { omitComplete: true } : {});
+      if (phase === "worker coverage") page.emit("worker", { url: () => WORKER_URL });
+      if (phase === "drain") {
+        const send = page.session.send.bind(page.session);
+        page.session.send = (method, params) => method === "Network.setCacheDisabled" ?
+          Promise.reject(new Error("drain control unavailable")) : send(method, params);
+      }
+      if (phase === "dispose") page.session.detach = async () => { throw new Error("detach unavailable"); };
+      if (phase === "disposed") await observer.dispose();
+      const error = await (phase === "dispose" ? observer.dispose() : observer.finish()).then(() => null, error => error);
+      release?.(HTML);
+      assertTrace(error);
+      expect(error.message).toMatch(/successful, unredirected|external error: (body-read|drain|dispose)|outstanding frontend|coverage is incomplete|timed out|already disposed/);
+    });
+  }
+
+  test("setup rejection includes a frozen empty trace and still detaches", async () => {
+    const page = new MockPage();
+    page.session.send = async () => { throw new Error("unsupported CDP"); };
+    const error = await observeFrontendResponses(page, { documentURL: DOCUMENT, experimentalDedicatedWorkers: true })
+      .then(() => null, error => error);
+    expect(error.message).toContain("frontend observation external error: setup;");
+    expect(assertTrace(error)).toEqual({ ownerTargetId: null, recent: [] });
+    expect(page.session.detached).toBe(true);
+    expect(page.session.listenerCount("Network.responseReceived")).toBe(0);
+  });
+
+  test("mutating an escaped internal error cannot change its safe diagnostic reason or stack", async () => {
+    const escaped = await setup({ experimentalDedicatedWorkers: "invalid" }).catch(error => error);
+    expect(escaped.message).toBe("invalid worker observation mode");
+    escaped.message = "https://outside.invalid/path?token=mutated-message-secret";
+    escaped.stack = "Error: mutated-stack-secret\n    at https://outside.invalid/stack";
+    const page = new MockPage();
+    page.session.send = async () => { throw escaped; };
+    const error = await observeFrontendResponses(page, { documentURL: DOCUMENT, experimentalDedicatedWorkers: true })
+      .catch(error => error);
+    assertTrace(error);
+    expect(error.message).toContain("invalid worker observation mode;");
+    for (const marker of ["outside.invalid", "https:", "token=", "mutated-message-secret", "mutated-stack-secret"]) {
+      expect(error.message).not.toContain(marker);
+      expect(error.stack).not.toContain(marker);
+    }
+  });
+
+  for (const phase of ["setup", "body-read", "drain", "worker", "event", "dispose"]) {
+    test(`external ${phase} errors cannot leak arbitrary message stack or fields`, async () => {
+      const injected = new Error("https://outside.invalid/path?token=secret-token\nAuthorization: header-secret body-secret");
+      injected.stack += "\n    at https://outside.invalid/stack?token=stack-secret";
+      injected.cause = { body: "cause-secret" };
+      injected.identityTrace = { recent: [{ url: "forged-trace-secret" }] };
+      Object.freeze(injected);
+      let error;
+      if (phase === "setup") {
+        const page = new MockPage();
+        page.session.send = async () => { throw injected; };
+        error = await observeFrontendResponses(page, { documentURL: DOCUMENT, experimentalDedicatedWorkers: true })
+          .catch(error => error);
+      } else {
+        const { page, observer, emit } = await setup({ experimentalDedicatedWorkers: true });
+        emit(phase === "body-read" ? { read: async () => { throw injected; } } : {});
+        if (phase === "drain") {
+          const send = page.session.send.bind(page.session);
+          page.session.send = (method, params) => method === "Network.setCacheDisabled" ?
+            Promise.reject(injected) : send(method, params);
+        }
+        if (phase === "worker") {
+          page.session.childHandler = async () => { throw injected; };
+          await attachWorker(page);
+        }
+        if (phase === "event") page.session.emit("Network.requestWillBeSent", { requestId: "bad-event", type: "Other",
+          request: { url: "invalid-url?token=secret-token", method: "GET" } });
+        if (phase === "dispose") page.session.detach = async () => { throw injected; };
+        error = await (phase === "dispose" ? observer.dispose() : observer.finish()).catch(error => error);
+      }
+      assertTrace(error);
+      expect(error.message).toContain(phase === "worker" ? "worker CDP command rejected;" :
+        `frontend observation external error: ${phase === "event" ? "worker-transport" : phase};`);
+      expect(error.cause).toBeUndefined();
+      for (const marker of ["outside.invalid", "https:", "token=", "secret-token", "Authorization", "header-secret",
+        "body-secret", "stack-secret", "cause-secret", "forged-trace-secret", "invalid-url"]) {
+        expect(error.message).not.toContain(marker);
+        expect(error.stack).not.toContain(marker);
+        expect(JSON.stringify(error.identityTrace)).not.toContain(marker);
+      }
+    });
+  }
+
   test("pre-control worker diagnostics redact malformed request and session IDs", async () => {
     const { page, observer, emit } = await setup({ experimentalDedicatedWorkers: true });
     emit();
@@ -665,6 +815,7 @@ test.describe("experimental owned dedicated worker transport", () => {
       response: { url: WORKER_URL, status: 200, headers: { "content-length": String(WORKER_BODY.length) }, mimeType: "text/javascript" } });
     const error = await observer.finish().then(() => null, error => error);
     expect(error?.message).toContain("worker response has no original owned request; identityTrace=");
+    assertTrace(error);
     const trace = JSON.parse(error.message.split("; identityTrace=")[1]);
     expect(trace).toMatchObject({ requestId: "different-child-request", source: "worker",
       sessionId: "worker-session", targetId: "worker-target", ownerTargetId: "owned-page" });
@@ -780,7 +931,7 @@ test.describe("experimental owned dedicated worker transport", () => {
     emit(); await attachWorker(page);
     page.session.childBodies.get("worker-session").clear();
     workerMain(page);
-    await expect(observer.finish()).rejects.toThrow(/worker body unavailable/);
+    await expect(observer.finish()).rejects.toThrow(/worker CDP command rejected/);
     expect(page.session.calls.some(call => call.method === "Network.loadNetworkResource")).toBe(false);
   });
 
@@ -796,7 +947,7 @@ test.describe("experimental owned dedicated worker transport", () => {
     const { page, observer, emit } = await setup({ experimentalDedicatedWorkers: true });
     emit(); page.session.childHandler = command => { if (command.method === "Network.enable") throw new Error("unsupported network controls"); };
     await attachWorker(page);
-    await expect(observer.finish()).rejects.toThrow(/unsupported network controls/);
+    await expect(observer.finish()).rejects.toThrow(/worker CDP command rejected/);
     expect(page.session.workerCommands.some(command => command.method === "Runtime.runIfWaitingForDebugger")).toBe(false);
   });
 

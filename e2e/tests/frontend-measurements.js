@@ -10,11 +10,20 @@ const DEFAULT_LIMITS = Object.freeze({
   timeoutMs: 30_000,
 });
 
+// Only errors created here with fixed or explicitly sanitized fields may keep
+// their reason/stack. Protocol and transport exceptions are untrusted text.
+const internalObservationErrors = new WeakMap();
+function observationError(message) {
+  const error = new Error(message);
+  internalObservationErrors.set(error, Object.freeze({ message, stack: error.stack }));
+  return error;
+}
+
 function loopbackURL(value) {
   const url = new URL(value);
   if (url.protocol !== "http:" || !["127.0.0.1", "[::1]"].includes(url.hostname) ||
       url.username || url.password || url.hash || url.href !== value) {
-    throw new Error("a canonical HTTP literal-loopback URL is required");
+    throw observationError("a canonical HTTP literal-loopback URL is required");
   }
   return url;
 }
@@ -56,6 +65,7 @@ function dedicatedWorkerTransport(raw, limits, origin) {
   // Failure-only bounded identity diagnostics. Never retain event objects,
   // URLs, headers, bodies or arbitrary protocol text in this ring.
   const recentIdentities = [];
+  const tracedFailures = new WeakMap();
   const opaqueIdentity = value => value == null ? null :
     typeof value === "string" && /^[A-Za-z0-9._-]{1,80}$/.test(value) ? value : "[redacted]";
   const rememberIdentity = (method, requestId, source) => {
@@ -66,11 +76,26 @@ function dedicatedWorkerTransport(raw, limits, origin) {
     };
     recentIdentities.push(identity);
     if (recentIdentities.length > 32) recentIdentities.shift();
-    return identity;
+  };
+  transport.withIdentityTrace = (error, stage) => {
+    const original = error instanceof Error ? error : new Error("external failure");
+    if (tracedFailures.has(original)) return tracedFailures.get(original);
+    const recent = Object.freeze(recentIdentities.map(identity => Object.freeze({ ...identity })));
+    const trace = Object.freeze({ ...recent.at(-1), ownerTargetId: opaqueIdentity(ownerTargetId), recent });
+    const safe = internalObservationErrors.get(original);
+    const reason = safe ? safe.message : `frontend observation external error: ${stage}`;
+    const traced = new Error(`${reason}; identityTrace=${JSON.stringify(trace)}`);
+    if (safe && typeof safe.stack === "string") {
+      traced.stack = `${traced.name}: ${traced.message}\n${safe.stack.split("\n").slice(1).join("\n")}`;
+    }
+    Object.defineProperty(traced, "identityTrace", { value: trace });
+    tracedFailures.set(original, traced);
+    tracedFailures.set(traced, traced);
+    return traced;
   };
   const fail = error => {
-    failure ||= error instanceof Error ? error : new Error(String(error));
-    transport.emit("observationError", failure);
+    failure ||= error instanceof Error ? error : new Error("external failure");
+    transport.emit("observationError", transport.withIdentityTrace(failure, "worker-transport"));
   };
   const key = (source, requestId) => JSON.stringify([
     source && requestId !== source.targetId ? source.id : "page", requestId,
@@ -81,7 +106,7 @@ function dedicatedWorkerTransport(raw, limits, origin) {
       ...["content-length", "content-type", "content-encoding", "content-range", "transfer-encoding"].map(name => headers[name] || "")]);
   };
   const childCommand = (child, method, params = {}) => {
-    if (closed || child.closed) throw new Error("worker session detached");
+    if (closed || child.closed) throw observationError("worker session detached");
     const id = ++child.commandId;
     let resolveResult, rejectResult;
     const result = new Promise((resolve, reject) => { resolveResult = resolve; rejectResult = reject; });
@@ -90,7 +115,7 @@ function dedicatedWorkerTransport(raw, limits, origin) {
     // enqueue all controls, then resume; require every inner reply before finish.
     const timer = setTimeout(() => {
       child.pending.delete(id);
-      rejectResult(new Error(`worker CDP command timed out: ${method}`));
+      rejectResult(observationError(`worker CDP command timed out: ${method}`));
     }, limits.timeoutMs);
     child.pending.set(id, { resolve: resolveResult, reject: rejectResult, timer });
     result.catch(() => {});
@@ -106,12 +131,12 @@ function dedicatedWorkerTransport(raw, limits, origin) {
   const forward = (method, event, source = null) => {
     if (closed || failure) return;
     try {
-      const identity = rememberIdentity(method, event.requestId, source);
+      rememberIdentity(method, event.requestId, source);
       const requestId = key(source, event.requestId);
       const worker = source && event.requestId === source.targetId ? source : targets.get(event.requestId);
       let record = records.get(requestId);
       if (source && !source.controlsSent) {
-        throw new Error(`worker network event preceded owned cache controls (${method}; request ${opaqueIdentity(event.requestId)}; session ${opaqueIdentity(source.id)}; dispatched commands ${source.commandId})`);
+        throw observationError(`worker network event preceded owned cache controls (${method}; request ${opaqueIdentity(event.requestId)}; session ${opaqueIdentity(source.id)}; dispatched commands ${source.commandId})`);
       }
       if (method === "Network.requestWillBeSent") {
         const candidate = !!frontendKind(event.request.url, event.type || "Other") ||
@@ -122,18 +147,16 @@ function dedicatedWorkerTransport(raw, limits, origin) {
           // OCI fetches may redirect. They remain outside executable-byte
           // observation; never let that exception hide a frontend redirect.
           if (!event.redirectResponse || record.candidate || candidate || record.complete) {
-            throw new Error("duplicate or changed worker request identity");
+            throw observationError("duplicate or changed worker request identity");
           }
         }
-        if (source && event.requestId === source.targetId) throw new Error("worker main request has no original creator request");
+        if (source && event.requestId === source.targetId) throw observationError("worker main request has no original creator request");
         record = { start: event.request, startSource: source, requestId: event.requestId, candidate, response: null, complete: false, bodyRead: false };
         records.set(requestId, record);
-        if (records.size > limits.maxResponses * 2) throw new Error("too many worker transport request identities");
+        if (records.size > limits.maxResponses * 2) throw observationError("too many worker transport request identities");
       } else if (method === "Network.responseReceived") {
         if (!record) {
-          throw new Error("worker response has no original owned request; identityTrace=" + JSON.stringify({
-            ...identity, ownerTargetId: opaqueIdentity(ownerTargetId), recent: recentIdentities,
-          }));
+          throw observationError("worker response has no original owned request");
         }
         if (event.response.fromDiskCache || event.response.fromPrefetchCache || event.response.fromServiceWorker) {
           // Preserve every cache signal even when the main response migrates.
@@ -142,7 +165,7 @@ function dedicatedWorkerTransport(raw, limits, origin) {
         }
         if (record.response) {
           if (!worker || !source || normalized(record.response) !== normalized(event.response)) {
-            throw new Error("worker response metadata changed across targets");
+            throw observationError("worker response metadata changed across targets");
           }
           return;
         }
@@ -152,7 +175,7 @@ function dedicatedWorkerTransport(raw, limits, origin) {
       } else if (method === "Network.loadingFinished") {
         if (worker && !source) return; // The worker owns its initial body buffer.
         if (record) {
-          if (record.complete) throw new Error("duplicate worker transport completion");
+          if (record.complete) throw observationError("duplicate worker transport completion");
           record.complete = true;
           record.bodySource = source;
         }
@@ -166,16 +189,16 @@ function dedicatedWorkerTransport(raw, limits, origin) {
     try {
       const { sessionId, targetInfo, waitingForDebugger } = event;
       if (!sessionId || targetInfo?.type !== "worker" || !targetInfo.targetId || waitingForDebugger !== true) {
-        throw new Error("dedicated worker was not attached while waiting for debugger");
+        throw observationError("dedicated worker was not attached while waiting for debugger");
       }
-      if (targetInfo.parentId !== ownerTargetId) throw new Error("worker is not a direct child of the owned page target");
-      if (children.has(sessionId) || targets.has(targetInfo.targetId)) throw new Error("duplicate dedicated worker target");
-      if (children.size >= 4) throw new Error("too many dedicated worker targets");
+      if (targetInfo.parentId !== ownerTargetId) throw observationError("worker is not a direct child of the owned page target");
+      if (children.has(sessionId) || targets.has(targetInfo.targetId)) throw observationError("duplicate dedicated worker target");
+      if (children.size >= 4) throw observationError("too many dedicated worker targets");
       if (targetInfo.url) loopbackURL(targetInfo.url);
       const child = { id: sessionId, targetId: targetInfo.targetId, url: targetInfo.url,
         commandId: 0, pending: new Map(), closed: false, controlsSent: false, ready: false };
       const existing = records.get(key(null, child.targetId));
-      if (existing?.complete) throw new Error("worker main response completed before target capture");
+      if (existing?.complete) throw observationError("worker main response completed before target capture");
       children.set(sessionId, child);
       targets.set(child.targetId, child);
       rememberIdentity("Target.attachedToTarget", null, child);
@@ -217,17 +240,17 @@ function dedicatedWorkerTransport(raw, limits, origin) {
     if (closed || failure) return;
     try {
       const child = children.get(sessionId);
-      if (!child || child.closed) throw new Error("message from unowned worker session");
+      if (!child || child.closed) throw observationError("message from unowned worker session");
       const payload = JSON.parse(message);
       if (Object.hasOwn(payload, "id")) {
         const pending = child.pending.get(payload.id);
-        if (!pending) throw new Error("unmatched worker command reply");
+        if (!pending) throw observationError("unmatched worker command reply");
         child.pending.delete(payload.id);
         clearTimeout(pending.timer);
-        if (payload.error) pending.reject(new Error(`worker CDP error: ${payload.error.message || "unknown"}`));
+        if (payload.error) pending.reject(observationError("worker CDP command rejected"));
         else pending.resolve(payload.result);
       } else if (payload.method === "Target.attachedToTarget") {
-        throw new Error("nested dedicated worker targets are unsupported");
+        throw observationError("nested dedicated worker targets are unsupported");
       } else if (networkEvents.includes(payload.method)) {
         forward(payload.method, payload.params, child);
       }
@@ -236,16 +259,16 @@ function dedicatedWorkerTransport(raw, limits, origin) {
   const detached = ({ sessionId }) => {
     if (closed) return;
     const child = children.get(sessionId);
-    if (!child) { fail(new Error("unowned worker target detached")); return; }
+    if (!child) { fail(observationError("unowned worker target detached")); return; }
     child.closed = true;
     for (const pending of child.pending.values()) {
       clearTimeout(pending.timer);
-      pending.reject(new Error("worker target detached before command completed"));
+      pending.reject(observationError("worker target detached before command completed"));
     }
     child.pending.clear();
     const main = records.get(key(null, child.targetId));
     if (!child.ready || !main?.bodyRead || [...records.values()].some(record => record.startSource === child && record.frontend && !record.bodyRead)) {
-      fail(new Error("worker target detached before frontend bytes were captured"));
+      fail(observationError("worker target detached before frontend bytes were captured"));
     }
   };
   const networkEvents = ["Network.requestWillBeSent", "Network.requestServedFromCache", "Network.responseReceived", "Network.loadingFinished", "Network.loadingFailed"];
@@ -259,7 +282,7 @@ function dedicatedWorkerTransport(raw, limits, origin) {
   transport.send = async (method, params) => {
     if (method !== "Network.getResponseBody") return raw.send(method, params);
     const record = records.get(params.requestId);
-    if (!record?.complete) throw new Error("owned worker response body is not complete");
+    if (!record?.complete) throw observationError("owned worker response body is not complete");
     const result = record.bodySource ? await sendChild(record.bodySource, method, { requestId: record.requestId }) :
       await raw.send(method, { requestId: record.requestId });
     record.bodyRead = true;
@@ -268,7 +291,7 @@ function dedicatedWorkerTransport(raw, limits, origin) {
   transport.enableWorkers = async () => {
     const info = await raw.send("Target.getTargetInfo");
     if (info?.targetInfo?.type !== "page" || typeof info.targetInfo.targetId !== "string" || !info.targetInfo.targetId) {
-      throw new Error("owned page target identity is unavailable");
+      throw observationError("owned page target identity is unavailable");
     }
     ownerTargetId = info.targetInfo.targetId;
     await raw.send("Target.setAutoAttach", {
@@ -278,7 +301,7 @@ function dedicatedWorkerTransport(raw, limits, origin) {
   };
   transport.observeWorker = worker => {
     publicWorkers.push(worker.url());
-    if (publicWorkers.length > 4) fail(new Error("too many public dedicated workers"));
+    if (publicWorkers.length > 4) fail(observationError("too many public dedicated workers"));
   };
   transport.flushWorkers = async () => {
     if (failure) throw failure;
@@ -290,19 +313,19 @@ function dedicatedWorkerTransport(raw, limits, origin) {
   };
   transport.assertWorkers = () => {
     if (failure) throw failure;
-    if (children.size !== publicWorkers.length) throw new Error("dedicated worker target coverage is incomplete");
+    if (children.size !== publicWorkers.length) throw observationError("dedicated worker target coverage is incomplete");
     const mainURLs = [];
     for (const child of children.values()) {
       const main = records.get(key(null, child.targetId));
       if (!child.ready || !main?.response || !main.complete || !main.bodyRead || main.bodySource !== child || main.startSource !== null) {
-        throw new Error("dedicated worker initial response bytes are missing");
+        throw observationError("dedicated worker initial response bytes are missing");
       }
-      if (child.url && child.url !== main.start.url) throw new Error("dedicated worker initial URL changed");
+      if (child.url && child.url !== main.start.url) throw observationError("dedicated worker initial URL changed");
       mainURLs.push(main.start.url);
     }
     for (const url of publicWorkers.filter(Boolean)) {
       const index = mainURLs.indexOf(url);
-      if (index < 0) throw new Error("public worker has no matching owned target");
+      if (index < 0) throw observationError("public worker has no matching owned target");
       mainURLs.splice(index, 1);
     }
   };
@@ -313,7 +336,7 @@ function dedicatedWorkerTransport(raw, limits, origin) {
     for (const child of children.values()) {
       child.closed = true;
       for (const pending of child.pending.values()) {
-        clearTimeout(pending.timer); pending.reject(new Error("worker observation disposed"));
+        clearTimeout(pending.timer); pending.reject(observationError("worker observation disposed"));
       }
       child.pending.clear();
     }
@@ -328,16 +351,16 @@ function dedicatedWorkerTransport(raw, limits, origin) {
 // for the page-only served-tree binder. Same-URL page fetches never cover workers.
 // Cache/SW controls are not undone; dispose this dedicated page/context afterward.
 async function observeFrontendResponses(page, { documentURL, experimentalDedicatedWorkers = false, ...overrides }) {
-  if (typeof experimentalDedicatedWorkers !== "boolean") throw new Error("invalid worker observation mode");
+  if (typeof experimentalDedicatedWorkers !== "boolean") throw observationError("invalid worker observation mode");
   const document = loopbackURL(documentURL);
   const limits = { ...DEFAULT_LIMITS };
   for (const [name, value] of Object.entries(overrides)) {
     if (!Object.hasOwn(limits, name) || !Number.isSafeInteger(value) || value <= 0 || value > DEFAULT_LIMITS[name]) {
-      throw new Error("invalid or expanded frontend observation limit");
+      throw observationError("invalid or expanded frontend observation limit");
     }
     limits[name] = value;
   }
-  if (page.url() !== "about:blank") throw new Error("frontend observation must start before navigation");
+  if (page.url() !== "about:blank") throw observationError("frontend observation must start before navigation");
 
   const rawSession = await page.context().newCDPSession(page);
   const session = experimentalDedicatedWorkers ? dedicatedWorkerTransport(rawSession, limits, document.origin) : rawSession;
@@ -352,23 +375,24 @@ async function observeFrontendResponses(page, { documentURL, experimentalDedicat
   let queue = Promise.resolve();
   let finished = null;
   let disposed = false;
-  const fail = error => { failure ||= error instanceof Error ? error : new Error(String(error)); };
+  const diagnosticFailure = (error, stage = "collector") => experimentalDedicatedWorkers ? session.withIdentityTrace(error, stage) : error;
+  const fail = (error, stage = "collector") => { failure ||= diagnosticFailure(error instanceof Error ? error : new Error(String(error)), stage); };
   const signature = metadata => JSON.stringify([metadata.url, metadata.resourceType, metadata.sizeBytes]);
   const responseMetadata = (address, resourceType, status, headers) => {
     const url = loopbackURL(address);
-    if (url.origin !== document.origin) throw new Error("frontend response origin changed");
-    if (status !== 200) throw new Error("frontend responses must be successful, unredirected GET requests");
+    if (url.origin !== document.origin) throw observationError("frontend response origin changed");
+    if (status !== 200) throw observationError("frontend responses must be successful, unredirected GET requests");
     if (headers["content-range"] || headers["transfer-encoding"] ||
         (headers["content-encoding"] && headers["content-encoding"].toLowerCase() !== "identity")) {
-      throw new Error("encoded, ranged, or unbounded frontend response");
+      throw observationError("encoded, ranged, or unbounded frontend response");
     }
     const lengthText = headers["content-length"];
     if (typeof lengthText !== "string" || !/^[1-9][0-9]*$/.test(lengthText)) {
-      throw new Error("frontend response needs an explicit positive Content-Length");
+      throw observationError("frontend response needs an explicit positive Content-Length");
     }
     const sizeBytes = Number(lengthText);
     if (!Number.isSafeInteger(sizeBytes) || sizeBytes > limits.maxResponseBytes) {
-      throw new Error("frontend response exceeds byte limit");
+      throw observationError("frontend response exceeds byte limit");
     }
     return { url: url.href, resourceType, sizeBytes };
   };
@@ -381,20 +405,20 @@ async function observeFrontendResponses(page, { documentURL, experimentalDedicat
       const candidate = frontend || (new URL(request.url).origin === document.origin &&
         ["fetch", "xhr"].includes(type.toLowerCase()));
       if (redirectResponse && (candidate || requests.get(requestId)?.candidate)) {
-        throw new Error("redirected frontend request");
+        throw observationError("redirected frontend request");
       }
-      if (ownedResponses.has(requestId)) throw new Error("reused frontend request identity");
+      if (ownedResponses.has(requestId)) throw observationError("reused frontend request identity");
       requests.set(requestId, { url: request.url, method: request.method, frontend, candidate, redirected: !!redirectResponse });
-      if (requests.size > limits.maxResponses) throw new Error("too many pending request identities");
+      if (requests.size > limits.maxResponses) throw observationError("too many pending request identities");
     } catch (error) { fail(error); }
   };
   const cacheUsed = ({ requestId }) => {
     if (failure || disposed) return;
     if (requests.get(requestId)?.frontend || ownedResponses.has(requestId)) {
-      fail(new Error("browser cache use makes frontend observation ambiguous"));
+      fail(observationError("browser cache use makes frontend observation ambiguous"));
     } else {
       pendingCache.add(requestId);
-      if (pendingCache.size > limits.maxResponses) fail(new Error("too many unclassified cache signals"));
+      if (pendingCache.size > limits.maxResponses) fail(observationError("too many unclassified cache signals"));
     }
   };
   const cdpResponse = ({ requestId, response, type = "Other" }) => {
@@ -403,22 +427,22 @@ async function observeFrontendResponses(page, { documentURL, experimentalDedicat
       const headers = Object.fromEntries(Object.entries(response.headers || {}).map(([key, value]) => [key.toLowerCase(), value]));
       const resourceType = frontendKind(response.url, type, response.mimeType || headers["content-type"] || "");
       if (!resourceType) {
-        if (requests.get(requestId)?.frontend) throw new Error("frontend request classification disappeared");
+        if (requests.get(requestId)?.frontend) throw observationError("frontend request classification disappeared");
         requests.delete(requestId);
         pendingCache.delete(requestId);
         return;
       }
       if (pendingCache.has(requestId) || response.fromDiskCache || response.fromPrefetchCache || response.fromServiceWorker) {
-        throw new Error("cached or service-worker response makes frontend observation ambiguous");
+        throw observationError("cached or service-worker response makes frontend observation ambiguous");
       }
       const request = requests.get(requestId);
-      if (!request || request.url !== response.url) throw new Error("frontend response has no matching owned CDP request");
-      if (request.method !== "GET" || request.redirected) throw new Error("frontend responses must be successful, unredirected GET requests");
-      if (ownedResponses.has(requestId)) throw new Error("duplicate owned CDP response identity");
+      if (!request || request.url !== response.url) throw observationError("frontend response has no matching owned CDP request");
+      if (request.method !== "GET" || request.redirected) throw observationError("frontend responses must be successful, unredirected GET requests");
+      if (ownedResponses.has(requestId)) throw observationError("duplicate owned CDP response identity");
       const metadata = responseMetadata(response.url, resourceType, response.status, headers);
-      if (ownedResponses.size >= limits.maxResponses) throw new Error("too many frontend responses");
+      if (ownedResponses.size >= limits.maxResponses) throw observationError("too many frontend responses");
       reservedBytes += metadata.sizeBytes;
-      if (reservedBytes > limits.maxTotalBytes) throw new Error("frontend responses exceed total byte limit");
+      if (reservedBytes > limits.maxTotalBytes) throw observationError("frontend responses exceed total byte limit");
       request.frontend = request.candidate = true;
       ownedResponses.set(requestId, { ...metadata, complete: false });
       pendingCache.delete(requestId);
@@ -429,12 +453,12 @@ async function observeFrontendResponses(page, { documentURL, experimentalDedicat
     try {
       const record = ownedResponses.get(requestId);
       if (requests.get(requestId)?.candidate && !record) {
-        throw new Error("frontend request completed without an owned response");
+        throw observationError("frontend request completed without an owned response");
       }
       requests.delete(requestId);
       pendingCache.delete(requestId);
       if (!record) return;
-      if (record.complete) throw new Error("duplicate frontend completion");
+      if (record.complete) throw observationError("duplicate frontend completion");
       record.complete = true;
       // Read the exact request ID on the same session whose cache state was
       // checked. Playwright Response.body() can silently refetch a missing body;
@@ -444,35 +468,35 @@ async function observeFrontendResponses(page, { documentURL, experimentalDedicat
         const result = await session.send("Network.getResponseBody", { requestId });
         if (disposed) return;
         if (!result || typeof result.body !== "string" || typeof result.base64Encoded !== "boolean") {
-          throw new Error("owned frontend response body is unavailable");
+          throw observationError("owned frontend response body is unavailable");
         }
         const body = Buffer.from(result.body, result.base64Encoded ? "base64" : "utf8");
         if (body.length !== record.sizeBytes || body.length > limits.maxResponseBytes) {
-          throw new Error("frontend response body and declared size differ");
+          throw observationError("frontend response body and declared size differ");
         }
         const sha256 = `sha256:${crypto.createHash("sha256").update(body).digest("hex")}`;
         const previous = assets.get(record.url);
         if (previous && (previous.sha256 !== sha256 || previous.sizeBytes !== record.sizeBytes ||
             previous.resourceType !== record.resourceType)) {
-          throw new Error("duplicate frontend URL returned different bytes or resource types");
+          throw observationError("duplicate frontend URL returned different bytes or resource types");
         }
         assets.set(record.url, {
           url: record.url, resourceType: record.resourceType, sha256, sizeBytes: record.sizeBytes,
           responseCount: (previous?.responseCount || 0) + 1,
         });
-      }).catch(fail);
+      }).catch(error => fail(error, "body-read"));
     } catch (error) { fail(error); }
   };
   const cdpFailed = ({ requestId }) => {
-    if (requests.get(requestId)?.candidate || ownedResponses.has(requestId)) fail(new Error("frontend request failed"));
+    if (requests.get(requestId)?.candidate || ownedResponses.has(requestId)) fail(observationError("frontend request failed"));
     requests.delete(requestId);
     pendingCache.delete(requestId);
   };
   const workerCreated = worker => experimentalDedicatedWorkers ? session.observeWorker(worker) :
-    fail(new Error("worker target is not covered by the owned page CDP session"));
+    fail(observationError("worker target is not covered by the owned page CDP session"));
   const failedRequest = request => {
     try {
-      if (frontendKind(request.url(), request.resourceType())) fail(new Error("frontend request failed"));
+      if (frontendKind(request.url(), request.resourceType())) fail(observationError("frontend request failed"));
     } catch (error) { fail(error); }
   };
   const observe = response => {
@@ -480,18 +504,18 @@ async function observeFrontendResponses(page, { documentURL, experimentalDedicat
     try {
       const resourceType = frontendKind(response.url(), response.request().resourceType(), response.headers()["content-type"] || "");
       if (!resourceType) return;
-      if (publicResponses.length >= limits.maxResponses) throw new Error("too many frontend responses");
+      if (publicResponses.length >= limits.maxResponses) throw observationError("too many frontend responses");
       const request = response.request();
       const metadata = responseMetadata(response.url(), resourceType, response.status(), response.headers());
-      if (request.url() !== metadata.url) throw new Error("frontend request URL changed");
+      if (request.url() !== metadata.url) throw observationError("frontend request URL changed");
       if (request.method() !== "GET" || request.redirectedFrom() || request.redirectedTo()) {
-        throw new Error("frontend responses must be successful, unredirected GET requests");
+        throw observationError("frontend responses must be successful, unredirected GET requests");
       }
-      if (response.fromServiceWorker()) throw new Error("service-worker frontend response");
+      if (response.fromServiceWorker()) throw observationError("service-worker frontend response");
       if (resourceType === "document") {
         if (++documentCount !== 1 || metadata.url !== documentURL ||
             !request.isNavigationRequest() || request.frame() !== page.mainFrame()) {
-          throw new Error("exactly one expected main-document response is required");
+          throw observationError("exactly one expected main-document response is required");
         }
       }
       // Compare one-to-one at finish, after cross-session event delivery drains.
@@ -532,8 +556,9 @@ async function observeFrontendResponses(page, { documentURL, experimentalDedicat
     page.on("worker", workerCreated);
     if (experimentalDedicatedWorkers) await session.enableWorkers();
   } catch (error) {
+    const reported = diagnosticFailure(error, "setup");
     await detach().catch(() => {});
-    throw error;
+    throw reported;
   }
 
   return {
@@ -541,7 +566,7 @@ async function observeFrontendResponses(page, { documentURL, experimentalDedicat
     // must have finished; this makes no promise about requests begun afterward.
     finish() {
       if (finished) return finished;
-      if (disposed) return Promise.reject(new Error("frontend observation already disposed"));
+      if (disposed) return Promise.reject(diagnosticFailure(observationError("frontend observation already disposed")));
       finished = (async () => {
         let timer;
         try {
@@ -550,26 +575,27 @@ async function observeFrontendResponses(page, { documentURL, experimentalDedicat
             do {
               previous = queue;
               await previous;
-              await session.send("Network.setCacheDisabled", { cacheDisabled: true });
+              await session.send("Network.setCacheDisabled", { cacheDisabled: true })
+                .catch(error => { throw diagnosticFailure(error, "drain"); });
               if (experimentalDedicatedWorkers) await session.flushWorkers();
             } while (previous !== queue && !failure);
           };
           await Promise.race([
             drain(),
             new Promise((_, reject) => {
-              timer = setTimeout(() => reject(new Error("frontend observation timed out")), limits.timeoutMs);
+              timer = setTimeout(() => reject(observationError("frontend observation timed out")), limits.timeoutMs);
             }),
           ]);
           if (failure) throw failure;
           if (experimentalDedicatedWorkers) session.assertWorkers();
-          if (pendingCache.size) throw new Error("unclassified cache signals remain at frontend snapshot");
-          if ([...requests.values()].some(request => request.candidate)) throw new Error("outstanding frontend request at snapshot");
+          if (pendingCache.size) throw observationError("unclassified cache signals remain at frontend snapshot");
+          if ([...requests.values()].some(request => request.candidate)) throw observationError("outstanding frontend request at snapshot");
           const owned = [...ownedResponses.values()].map(signature).sort();
           const observed = [...publicResponses].sort();
           if (owned.length !== observed.length || owned.some((value, index) => value !== observed[index])) {
-            throw new Error("frontend response has no one-to-one owned CDP identity");
+            throw observationError("frontend response has no one-to-one owned CDP identity");
           }
-          if (documentCount !== 1 || !assets.has(documentURL)) throw new Error("one complete main-document response is required");
+          if (documentCount !== 1 || !assets.has(documentURL)) throw observationError("one complete main-document response is required");
           return {
             schemaVersion: 1, kind: "diagnostic-loaded-frontend", qualification: "not-assessed",
             authentication: "not-verified", coverage: experimentalDedicatedWorkers ? "page-and-direct-dedicated-workers-experimental" : "page-target-only", origin: document.origin, documentURL,
@@ -579,10 +605,10 @@ async function observeFrontendResponses(page, { documentURL, experimentalDedicat
           clearTimeout(timer);
           await detach();
         }
-      })();
+      })().catch(error => { throw diagnosticFailure(error, "finish"); });
       return finished;
     },
-    dispose: detach,
+    dispose: () => detach().catch(error => { throw diagnosticFailure(error, "dispose"); }),
   };
 }
 
