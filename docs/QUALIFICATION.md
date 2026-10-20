@@ -99,8 +99,12 @@ kind `diagnostic-build-measurements`, with `qualification: not-assessed`.
 Tiny fixtures test the observer and file checks without a multi-GB ISO build.
 They do not establish a real browser build or installation result.
 
-The engine at [the tacklebox pin](https://github.com/tuna-os/tacklebox/blob/d36fdb8417819a7075cecfd6cf062b442c07335a/cmd/tbwasm/main.go) resolves a platform manifest digest and checks
-its applied overlay internally. Its browser build API returns only a byte
-count. A later contract for engine results needs review. It must expose identities
-for the consumed source, overlay and installed frontend. These observations cannot come from the catalog or tags. This diagnostic record is not a v2 receipt,
-and it changes no catalog admission or download route.
+The engine pin now includes the operation-local result API at
+`tacklebox/b2c917d7e896d49d095daefe6a812beb9d4398d6`. Its consumer validates the
+observed result and saved byte count; see [browser build observations](browser-build-observations.md).
+Producer and frontend identity remain missing. These diagnostic records are not
+qualification receipts and change no catalog admission or download route.
+
+The [integration proposal](browser-qualification-integration-plan.md) describes
+the reviewed retention, provenance and strict-harness gaps. It authorizes no
+build, publication or routing change.
