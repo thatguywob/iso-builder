@@ -116,6 +116,7 @@ test('catalog updates remove unoffered configured choices and clear the selected
  await expect(page.locator('#log')).toContainText('no longer available');
  expect(engineRequests).toBe(0);await expect(page.locator('#build')).toBeDisabled();
  await expect(page.locator('#introspect')).toBeDisabled();
+ await page.locator('#base-options > summary').click();
  await page.locator('#variant').selectOption('ddi:snowfield');
  await page.locator('#editions .edition').click();
  await expect(page.locator('#introspect')).toBeEnabled();
