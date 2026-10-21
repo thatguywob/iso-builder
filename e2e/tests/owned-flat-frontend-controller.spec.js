@@ -249,7 +249,7 @@ async function observedTargetURL(url){const f=fixture();f.socket.inventoryReply=
  expect(f.socket.calls.some(c=>c.method === "Target.createBrowserContext")).toBe(false);return report.trace.at(-1).targetInventory.targets[0].urlFacts;}
 for(const [label,host,worker] of componentExamples)test(`public ${label} component is diagnosed while startup remains rejected`,async()=>{
  const facts=await observedTargetURL(`chrome-extension://${host}/${worker}`);
- expect(facts).toEqual({scheme:"chrome-extension",knownComponent:label,exactKnownWorkerPath:true,credentialsPresent:false,queryPresent:false,fragmentPresent:false});expect(Object.isFrozen(facts)).toBe(true);
+ expect(facts).toEqual({scheme:"chrome-extension",canonicalExtensionId:host,knownComponent:label,exactKnownWorkerPath:true,credentialsPresent:false,queryPresent:false,fragmentPresent:false});expect(Object.isFrozen(facts)).toBe(true);
 });
 for(const [name,url,scheme,label,worker] of [
  ["unknown","chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/SECRET","chrome-extension","unknown-extension",null],
@@ -269,5 +269,34 @@ for(const [name,url,scheme,label,worker] of [
  ["nonstring",{SECRET:true},"invalid","unavailable",null],
 ])test(`target URL ${name} preserves diagnostic uncertainty and redaction`,async()=>{
  const facts=await observedTargetURL(url);expect(facts).toMatchObject({scheme,knownComponent:label,exactKnownWorkerPath:worker});
- expect(JSON.stringify(facts)).not.toMatch(/SECRET|invalid\/|fignfifoniblkonapihmkfakmlgkbkcf/);
+ expect(JSON.stringify(facts)).not.toMatch(/SECRET|chrome-extension:\/\/|https?:\/\//);
+});
+
+
+// Falsification: approved canonical software IDs are the only newly exposed
+// identifiers. Arbitrary hosts, URL data and malformed/ambiguous IDs stay hidden.
+for(const [name,url,expected] of [
+ ["unknown-valid","chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/SECRET", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+ ["known-query","chrome-extension://fignfifoniblkonapihmkfakmlgkbkcf/service_worker.js?SECRET#SECRET", "fignfifoniblkonapihmkfakmlgkbkcf"],
+ ["too-short","chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/SECRET",null],
+ ["too-long","chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/SECRET",null],
+ ["wrong-alphabet","chrome-extension://qaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/SECRET",null],
+ ["uppercase","chrome-extension://AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/SECRET",null],
+ ["userinfo","chrome-extension://SECRET@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/worker.js",null],
+ ["port","chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:80/SECRET",null],
+ ["suffix","chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.SECRET/worker.js",null],
+ ["encoded","chrome-extension://%61aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/SECRET",null],
+ ["wrong-scheme","https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/SECRET",null],
+ ["normalized-path","chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/../SECRET",null],
+ ["leading-space"," chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/SECRET",null],
+])test(`canonical extension identifier diagnostic ${name}`,async()=>{
+ const facts=await observedTargetURL(url);expect(facts.canonicalExtensionId).toBe(expected);
+ expect(JSON.stringify(facts)).not.toMatch(/SECRET|chrome-extension:\/\/|https?:\/\//);
+});
+test("multiple unknown extension IDs are retained under the existing explicit inventory bound",async()=>{
+ const f=fixture();f.socket.inventoryReply={targetInfos:["a","b"].map(letter=>({targetId:"SECRET"+letter,type:"service_worker",url:`chrome-extension://${letter.repeat(32)}/SECRET`,browserContextId:"SECRET_CONTEXT",attached:false}))};
+ const report=controllerDiagnosticsFor(await rejected(f.open())),inventory=report.trace.at(-1).targetInventory;
+ expect(report.reason).toBe("context-not-isolated");expect(inventory.truncated).toBe(false);
+ expect(inventory.targets.map(item=>item.urlFacts.canonicalExtensionId)).toEqual(["a".repeat(32),"b".repeat(32)]);
+ expect(JSON.stringify(report)).not.toContain("SECRET");
 });

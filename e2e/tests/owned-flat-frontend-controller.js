@@ -24,7 +24,7 @@ const COMPONENTS = Object.freeze({
   nkeimhogjdpnpccoofpliimaahmaaome: Object.freeze({ label: "hangouts", worker: "/thunk.js" }),
 });
 function targetURLObservation(value) {
-  const unknown = { scheme: "invalid", knownComponent: "unavailable", exactKnownWorkerPath: null,
+  const unknown = { scheme: "invalid", canonicalExtensionId: null, knownComponent: "unavailable", exactKnownWorkerPath: null,
     credentialsPresent: null, queryPresent: null, fragmentPresent: null };
   if (typeof value !== "string" || !value || value.length > 4096) return Object.freeze({ ...unknown, scheme: value === undefined ? "missing" : "invalid" });
   try {
@@ -33,7 +33,9 @@ function targetURLObservation(value) {
     const credentialsPresent = !!(url.username || url.password), queryPresent = !!url.search, fragmentPresent = !!url.hash;
     const canonicalExtension = scheme === "chrome-extension" && !credentialsPresent && !url.port && url.href === value && /^[a-p]{32}$/.test(url.hostname);
     const component = canonicalExtension && Object.hasOwn(COMPONENTS, url.hostname) ? COMPONENTS[url.hostname] : null;
-    return Object.freeze({ scheme, knownComponent: component?.label || (scheme === "chrome-extension" ? "unknown-extension" : "not-extension"),
+    // Only canonical software IDs from this owned test browser are exposed.
+    // No URL, host outside this grammar, path, query or fragment is returned.
+    return Object.freeze({ scheme, canonicalExtensionId: canonicalExtension ? url.hostname : null, knownComponent: component?.label || (scheme === "chrome-extension" ? "unknown-extension" : "not-extension"),
       exactKnownWorkerPath: component ? url.pathname === component.worker && !queryPresent && !fragmentPresent : null,
       credentialsPresent, queryPresent, fragmentPresent });
   } catch { return Object.freeze(unknown); }
