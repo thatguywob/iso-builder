@@ -8,7 +8,7 @@ const path = require("node:path");
 const http = require("node:http");
 const crypto = require("node:crypto");
 const { launchOwnedChromium, deadline, prerequisiteDiagnosticsFor } = require("./owned-flat-cdp");
-const { openOwnedFrontendController } = require("./owned-flat-frontend-controller");
+const { openOwnedFrontendController, controllerDiagnosticsFor } = require("./owned-flat-frontend-controller");
 const bad = code => new Error(`owned-layer-fixture:${code}`);
 const sha = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
 const LAYERS = Object.freeze({ A: Buffer.alloc(97, 65), B: Buffer.alloc(131, 66), C: Buffer.alloc(59, 67) });
@@ -112,7 +112,7 @@ test("production fixture leaves cache enabled and has bounded payload/storage in
 });
 test("owned collector real Chromium unchanged production layerworker cold warm shared bytes", async () => {
   test.setTimeout(40000);
-  let owned, controller, frontend, registry, prerequisites = null, failure, observation, errorCode = null;
+  let owned, controller, frontend, registry, prerequisites = null, failure, observation, errorCode = null, controllerDiagnostics = null;
   const measured = [], frontendCounts = {}, registryCounts = { requests:{}, rejected:0, bodyBytes:0, blobBodyBytes:0, uniqueLayers:new Set() };
   try {
     const assets = { "/":HTML };
@@ -147,13 +147,14 @@ test("owned collector real Chromium unchanged production layerworker cold warm s
     expect(measured.map(phase=>phase.blobBodyBytesThisPhase)).toEqual([228,0,59]);
   } catch (error) {
     prerequisites ||= prerequisiteDiagnosticsFor(error);
+    controllerDiagnostics = controllerDiagnosticsFor(error);
     errorCode = /^owned-(?:cdp|controller|frontend|ws|body|layer-fixture):[a-z-]+$/.test(error?.message || "") ? error.message : "owned-layer-fixture:assertion-failed";
     failure = bad("experiment-failed");
   }
   finally {
     try { if (controller) await controller.dispose(); else if (owned) await owned.close(); } catch { failure ||= bad("owned-cleanup-failed"); }
     try { await closeServer(registry); await closeServer(frontend); } catch { failure ||= bad("server-cleanup-failed"); }
-    console.log(`OWNED_LAYER_CACHE_EXPERIMENT ${JSON.stringify({success:!failure,measured,prerequisites,
+    console.log(`OWNED_LAYER_CACHE_EXPERIMENT ${JSON.stringify({success:!failure,measured,prerequisites,controllerDiagnostics,
       browserVersion:owned?.pin.browserVersion || null,terminalCleanupVerified:observation?.terminalCleanupVerified === true,
       completeCoverage:false,collectorProofEstablished:false,errorCode:errorCode || failure?.message || null})}`);
   }

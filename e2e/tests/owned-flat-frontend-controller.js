@@ -4,23 +4,73 @@
 const { createOwnedFrontendState } = require("./owned-flat-frontend-state");
 const { BodyReservations } = require("./owned-flat-body-reservations");
 const { deadline } = require("./owned-flat-cdp");
-const bad = code => new Error(`owned-controller:${code}`);
+const reasons = new WeakMap(), diagnostics = new WeakMap(), causes = new WeakMap();
+const bad = code => { const error = new Error(`owned-controller:${code}`); reasons.set(error, code); return error; };
+const COMMANDS = new Set(["Target.getTargets", "Target.setDiscoverTargets", "Target.createBrowserContext", "Target.setAutoAttach", "Target.createTarget",
+  "Page.getFrameTree", "Page.enable", "Page.navigate", "Runtime.enable", "Runtime.runIfWaitingForDebugger", "Runtime.evaluate",
+  "Network.enable", "Network.setCacheDisabled", "Network.setBypassServiceWorker", "Debugger.enable", "Fetch.enable"]);
+const EVENTS = new Set(["Target.targetCreated", "Target.targetInfoChanged", "Target.attachedToTarget", "Target.targetDestroyed", "Target.targetCrashed",
+  "Target.detachedFromTarget", "Inspector.detached", "Page.frameAttached", "Page.frameDetached", "Page.navigatedWithinDocument", "Page.windowOpen",
+  "Page.frameNavigated", "Page.loadEventFired", "Runtime.executionContextCreated", "Runtime.executionContextDestroyed", "Runtime.executionContextsCleared",
+  "Debugger.scriptParsed", "Network.requestWillBeSent", "Network.responseReceived", "Network.loadingFinished", "Network.loadingFailed", "Fetch.requestPaused"]);
+function controllerDiagnosticsFor(error) { return diagnostics.get(error) || null; }
 const id = value => typeof value === "string" && value.length > 0 && value.length <= 256;
+const urlKind = value => value === "" ? "empty" : value === "about:blank" ? "about-blank" : typeof value === "string" ? "other" : "missing";
 const NETWORK = new Set(["Network.requestWillBeSent", "Network.requestServedFromCache", "Network.responseReceived", "Network.loadingFinished", "Network.loadingFailed"]);
 async function openOwnedFrontendController(owned, { documentURL, workerURLs, expectedPageScripts = [], firstResumeDelayMs = 0, timeoutMs = 10000 } = {}) {
+  let c, origin;
+  try {
   if (!owned?.connection || !(owned.connection.bodyReservations instanceof BodyReservations) ||
       typeof owned.verify !== "function" || typeof owned.close !== "function" || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000) throw bad("configuration-invalid");
-  const c = owned.connection, origin = new URL(documentURL).origin;
+  c = owned.connection; origin = new URL(documentURL).origin;
   if (!Array.isArray(expectedPageScripts) || expectedPageScripts.length > 64 || new Set(expectedPageScripts).size !== expectedPageScripts.length ||
       expectedPageScripts.some(url => typeof url !== "string" || new URL(url).origin !== origin || url === documentURL)) throw bad("page-script-policy-invalid");
+  } catch (error) {
+    const failure = bad(reasons.get(error) || "configuration-invalid"); causes.set(failure, error);
+    diagnostics.set(failure, Object.freeze({ profile: "owned-controller-startup-diagnostic-v1", stage: "configuration", reason: reasons.get(failure),
+      contextCreated: null, pageAttached: null, frameObserved: null, navigationIssued: null, runtimeContextSeen: null, runtimeFrameMatches: null,
+      navigationFrameMatches: null, documentRequests: null, documentFrames: null, initialContexts: null, workerAttachments: null,
+      discoveredTargets: null, aliases: 0, aliasOverflow: false, dropped: 0, trace: Object.freeze([]) }));
+    throw failure;
+  }
   const pageScripts = new Map(), evaluations = new Map(); let initialFrame, navigationIssued = false;
   const initialContexts = new Set();
   let rejectLoaded;
   let context, page, pageTarget, frame, navigationFrame, runtimeContext, state, failure, stopped = false, closing = false, cleanup, pageLoaded = false;
   let eventCount = 0, documentRequests = 0; const frames = new Set(), attachedWorkers = new Map(), discovered = new Map();
+  let stage = "verify-owned", sequence = 0, dropped = 0, aliasOverflow = false;
+  const trace = [], aliases = new Map();
+  const alias = value => {
+    if (!(id(value) || Number.isSafeInteger(value) && value >= 0)) return null;
+    const key = `${typeof value}:${value}`;
+    if (!aliases.has(key)) {
+      if (aliases.size >= 64) { aliasOverflow = true; return "overflow"; }
+      aliases.set(key, `i${aliases.size + 1}`);
+    }
+    return aliases.get(key);
+  };
+  const note = value => {
+    if (trace.length === 64) { trace.shift(); dropped++; }
+    trace.push(Object.freeze({ sequence: ++sequence, stage, ...value }));
+  };
+  const snapshot = reason => Object.freeze({ profile: "owned-controller-startup-diagnostic-v1", stage, reason,
+    contextCreated: !!context, pageAttached: !!page, frameObserved: !!frame, navigationIssued,
+    runtimeContextSeen: !!runtimeContext, runtimeFrameMatches: !!runtimeContext && !!frame && runtimeContext.frame === frame,
+    navigationFrameMatches: !!frame && !!navigationFrame && frame === navigationFrame,
+    documentRequests, documentFrames: frames.size, initialContexts: initialContexts.size,
+    workerAttachments: attachedWorkers.size, discoveredTargets: discovered.size,
+    aliases: aliases.size, aliasOverflow, dropped, trace: Object.freeze([...trace]) });
   const fail = code => { failure ||= bad(code); state?.abort(); rejectLoaded?.(failure); return failure; };
   const check = () => { if (failure) throw failure; if (c.failure || c.socket?.failure) throw fail("transport-failed"); if (stopped) throw bad("closed"); };
-  const send = (method, params = {}, session) => { check(); return c.send(method, params, session); };
+  const send = (method, params = {}, session) => {
+    check(); const command = COMMANDS.has(method) ? method : "other", owner = alias(session);
+    note({ kind: "command", command, outcome: "sent", session: owner });
+    return c.send(method, params, session).then(value => {
+      note({ kind: "command", command, outcome: "acknowledged", session: owner,
+        replyTarget: alias(value?.targetId), replyContext: alias(value?.browserContextId), replyFrame: alias(value?.frameTree?.frame?.id),
+        frameURLKind: urlKind(value?.frameTree?.frame?.url), childFramesPresent: Array.isArray(value?.frameTree?.childFrames) ? value.frameTree.childFrames.length > 0 : null }); return value;
+    }, error => { note({ kind: "command", command, outcome: "failed", session: owner }); throw error; });
+  };
   let resolveLoaded; const loaded = new Promise((resolve,reject) => { resolveLoaded = resolve; rejectLoaded = reject; }); loaded.catch(() => {});
   const maybeLoaded = () => { if (pageLoaded && frame && runtimeContext) resolveLoaded(); };
   const onEvent = packet => {
@@ -30,6 +80,23 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
       // Stream data progress is not retained or treated as executable evidence.
       // The tiny diagnostic cap applies only to retained/control/lifecycle events.
       if (method === "Network.dataReceived") return;
+      note({ kind: "event", event: EVENTS.has(method) ? method : "other", session: alias(session),
+        request: alias(p.requestId), target: alias(p.targetInfo?.targetId), parent: alias(p.targetInfo?.parentId),
+        script: alias(p.scriptId), scriptExpected: expectedPageScripts.includes(p.url), scriptControllerOwned: evaluations.has(p.url),
+        scriptLanguage: ["JavaScript", "WebAssembly"].includes(p.scriptLanguage) ? p.scriptLanguage : p.scriptLanguage === undefined ? "missing" : "other",
+        attachedSession: alias(p.sessionId), frame: alias(p.frame?.id || p.frameId || p.context?.auxData?.frameId),
+        context: alias(p.context?.id || p.executionContextId), isDefault: typeof p.context?.auxData?.isDefault === "boolean" ? p.context.auxData.isDefault : null,
+        pageSession: !!page && session === page, waiting: typeof p.waitingForDebugger === "boolean" ? p.waitingForDebugger : null,
+        targetType: ["page", "worker", "shared_worker", "service_worker"].includes(p.targetInfo?.type) ? p.targetInfo.type : p.targetInfo ? "other" : null,
+        parentPresent: !!p.targetInfo?.parentId, parentIsPage: !!pageTarget && p.targetInfo?.parentId === pageTarget,
+        initialFrameMatches: !!initialFrame && (p.frame?.id || p.context?.auxData?.frameId) === initialFrame,
+        mainFrameMatches: !!frame && (p.frame?.id || p.context?.auxData?.frameId) === frame,
+        contextOriginMatches: typeof p.context?.origin === "string" ? p.context.origin === origin : null,
+        mainContextMatches: !!runtimeContext && (p.context?.id || p.executionContextId) === runtimeContext.id,
+        contextBlankOrigin: typeof p.context?.origin === "string" ? ["", "://"].includes(p.context.origin) : null,
+        aboutBlankURL: (p.request?.url || p.frame?.url || p.targetInfo?.url) === "about:blank",
+        targetURLKind: urlKind(p.targetInfo?.url),
+        documentURLMatches: typeof (p.request?.url || p.frame?.url || p.targetInfo?.url) === "string" ? (p.request?.url || p.frame?.url || p.targetInfo?.url) === documentURL : null });
       if (++eventCount > 8192) throw bad("event-bound");
       if (["Target.targetDestroyed", "Target.targetCrashed", "Target.detachedFromTarget", "Inspector.detached"].includes(method)) throw bad("target-lifecycle-lost");
       if (method === "Target.targetCreated" || method === "Target.targetInfoChanged") {
@@ -41,12 +108,14 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
       if (method === "Target.attachedToTarget") {
         if (session === undefined && !page && p.targetInfo?.type === "page" && p.targetInfo.browserContextId === context &&
             p.waitingForDebugger === true && p.targetInfo.url === "about:blank" && id(p.sessionId) && id(p.targetInfo.targetId)) {
-          page = p.sessionId; pageTarget = p.targetInfo.targetId; return;
+          page = p.sessionId; pageTarget = p.targetInfo.targetId;
+          note({ kind: "attachment", outcome: "page-accepted", session: alias(page), target: alias(pageTarget) }); return;
         }
         if (!state || session !== page || p.targetInfo?.type !== "worker" || p.targetInfo.parentId !== pageTarget ||
             !id(p.targetInfo.targetId) || !id(p.sessionId) || attachedWorkers.has(p.targetInfo.targetId) ||
             [...attachedWorkers.values()].includes(p.sessionId) || attachedWorkers.size >= workerURLs.length) throw bad("worker-census-mismatch");
-        attachedWorkers.set(p.targetInfo.targetId, p.sessionId); state.accept(packet); return;
+        attachedWorkers.set(p.targetInfo.targetId, p.sessionId); state.accept(packet);
+        note({ kind: "attachment", outcome: "worker-census-accepted", session: alias(p.sessionId), target: alias(p.targetInfo.targetId) }); return;
       }
       if (method === "Page.frameAttached" || method === "Page.frameDetached" || method === "Page.navigatedWithinDocument" || method === "Page.windowOpen") throw bad("unsupported-page-lifecycle");
       if (method === "Page.frameNavigated") {
@@ -81,7 +150,10 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
       if (NETWORK.has(method) || method === "Fetch.requestPaused" || method.startsWith("Debugger.") || method === "Runtime.consoleAPICalled") {
         if (!state) throw bad("capture-started-too-late"); state.accept(packet);
       }
-    } catch (error) { fail(/^owned-controller:[a-z-]+$/.test(error?.message || "") ? error.message.slice(17) : "event-invalid"); }
+    } catch (error) {
+      if (packet.method === "Target.attachedToTarget") note({ kind: "attachment", outcome: "rejected", session: alias(packet.params?.sessionId), target: alias(packet.params?.targetInfo?.targetId) });
+      fail(reasons.get(error) || "event-invalid");
+    }
   };
   const onFailure = () => { if (!(closing && c.failure?.message === "owned-cdp:transport-disposed")) fail("transport-failed"); };
   c.on("event", onEvent); c.on("failure", onFailure);
@@ -95,21 +167,23 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
   })();
   try {
     await owned.verify();
+    stage = "initial-targets";
     const initial = await send("Target.getTargets");
     if (!Array.isArray(initial.targetInfos) || initial.targetInfos.length) throw bad("context-not-isolated");
-    await send("Target.setDiscoverTargets", { discover: true });
+    stage = "discover-targets"; await send("Target.setDiscoverTargets", { discover: true });
+    stage = "create-context";
     context = (await send("Target.createBrowserContext", { disposeOnDetach: true })).browserContextId;
     if (!id(context)) throw bad("context-missing");
-    await send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true,
+    stage = "browser-autoattach"; await send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true,
       filter: [{ type: "page" }, { exclude: true }] });
-    const created = await send("Target.createTarget", { url: "about:blank", browserContextId: context });
+    stage = "create-page"; const created = await send("Target.createTarget", { url: "about:blank", browserContextId: context });
     if (!page || created.targetId !== pageTarget) throw bad("page-attachment-missing");
-    const blank = (await send("Page.getFrameTree", {}, page)).frameTree;
+    stage = "initial-frame"; const blank = (await send("Page.getFrameTree", {}, page)).frameTree;
     if (!id(blank?.frame?.id) || blank.frame.url !== "about:blank" || blank.childFrames?.length) throw bad("initial-frame-mismatch");
     initialFrame = blank.frame.id;
     state = createOwnedFrontendState({ connection: c, pageSessionId: page, pageTargetId: pageTarget, documentURL, workerURLs,
       firstResumeDelayMs, timeoutMs, onFailure: () => fail("byte-observation-failed") });
-    await Promise.all([
+    stage = "page-controls"; await Promise.all([
       send("Network.enable", { maxTotalBufferSize: c.bodyReservations.limits.maxTotalBytes, maxResourceBufferSize: c.bodyReservations.limits.maxResponseBytes }, page),
       send("Network.setCacheDisabled", { cacheDisabled: true }, page), send("Network.setBypassServiceWorker", { bypass: true }, page),
       send("Page.enable", {}, page), send("Runtime.enable", {}, page), send("Debugger.enable", {}, page),
@@ -117,13 +191,15 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
       send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true,
         filter: [{ type: "worker" }, { type: "shared_worker" }, { type: "service_worker" }, { exclude: true }] }, page),
     ]);
-    await send("Runtime.runIfWaitingForDebugger", {}, page);
+    stage = "page-resume"; await send("Runtime.runIfWaitingForDebugger", {}, page);
     navigationIssued = true;
+    stage = "navigate";
     const navigation = await send("Page.navigate", { url: documentURL }, page);
     if (navigation.errorText || !id(navigation.frameId)) throw bad("navigation-failed"); navigationFrame = navigation.frameId;
-    await deadline(loaded, timeoutMs, "owned-page-load-timeout"); check();
+    stage = "page-load"; await deadline(loaded, timeoutMs, "owned-page-load-timeout"); check();
+    stage = "document-census";
     if (frame !== navigationFrame || runtimeContext.frame !== frame || documentRequests !== 1 || frames.size !== 1 || !frames.has(frame)) throw bad("document-census-mismatch");
-    return Object.freeze({
+    stage = "ready"; return Object.freeze({
       async evaluate(expression) {
         check(); if (typeof expression !== "string" || /[#@]\s*sourceURL\s*=/.test(expression) || Buffer.byteLength(expression) > 65000 || evaluations.size >= 4) throw fail("expression-bound");
         const label = `owned-controller-eval://operation/${evaluations.size + 1}`;
@@ -167,14 +243,17 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
           return Object.freeze({ ...bytes, freshContextCreated: true, mainFrameCount: 1, terminalCleanupVerified: true,
             observedBrowserVersion: owned.pin.browserVersion, externallyServedPageScripts: external.length, controllerExpressions: evaluations.size });
         } catch (error) {
-          fail(/^owned-controller:[a-z-]+$/.test(error?.message || "") ? error.message.slice(17) : "finish-failed");
+          fail(reasons.get(error) || "finish-failed");
+          causes.set(failure, error); diagnostics.set(failure, snapshot(reasons.get(error) || "external-error"));
           await close(); throw failure;
         }
       },
       dispose: close,
     });
-  } catch {
-    fail("setup-failed"); await close(); throw failure;
+  } catch (error) {
+    fail(reasons.get(error) || "setup-failed");
+    causes.set(failure, error); diagnostics.set(failure, snapshot(reasons.get(error) || "external-error"));
+    await close(); throw failure;
   }
 }
-module.exports = { openOwnedFrontendController };
+module.exports = { openOwnedFrontendController, controllerDiagnosticsFor };
