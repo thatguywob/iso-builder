@@ -64,13 +64,16 @@ func TestWebAndNativeCatalogLoadersPreserveVariantFlavorPlatformCoverage(t *test
 		t.Fatalf("read web loader: %v", err)
 	}
 
-	for _, file := range []string{"builder-config.js", "builder-config-data.js"} {
+	var configPrefix []byte
+	for _, file := range []string{"builder-config.js", "builder-config-data.js", "flatpak-defaults.js"} {
 		configJS, err := os.ReadFile("../app/public/" + file)
 		if err != nil {
 			t.Fatalf("read builder configuration: %v", err)
 		}
-		appJS = append(append(configJS, '\n'), appJS...)
+		configPrefix = append(configPrefix, configJS...)
+		configPrefix = append(configPrefix, '\n')
 	}
+	appJS = append(configPrefix, appJS...)
 
 	script := `
 const fs = require("fs");

@@ -44,6 +44,10 @@ for (const edit of cases) {
 '''], cwd=ROOT, check=True)
 
 
+def test_shared_default_image_reference_vectors():
+    subprocess.run(['node', '--test', 'tests/builder-config-image-references.test.cjs'], cwd=ROOT, check=True)
+
+
 def test_shared_flatpak_id_contract():
     subprocess.run(['node', '--test', 'tests/builder-config-flatpak-ids.test.cjs'], cwd=ROOT, check=True)
 
