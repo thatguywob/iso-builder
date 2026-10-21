@@ -142,7 +142,7 @@ function newFacts() {
     earlyImportOrWasm: false, networkResponseSeen: false, fromDiskCache: null, fromPrefetchCache: null,
     fromServiceWorker: null, freshContextCreated: false, cacheDisabledAcknowledged: false,
     bypassServiceWorkerAcknowledged: false, cacheFactsScope: "bootstrap-only", bootstrapServedFromCacheEvent: false,
-    endpointReverified: false, cleanupVerified: false, probeSucceeded: false, errorCode: null, capability: "unestablished" };
+    endpointReverified: false, cleanupVerified: false, probeSucceeded: false, errorCode: null, capability: "unestablished", startupTrace: null };
 }
 function recordBootstrapFlags(facts, response) {
   // Reject a second response rather than allowing migration/repetition to erase
@@ -175,9 +175,75 @@ test("owned probe preserves unknown provenance separately from acknowledged cont
   expect(facts.completeCoverage).toBe(false); expect(facts.collectorProofEstablished).toBe(false);
 });
 
+// Diagnostic-only aliases never expose raw IDs. The map and ring are bounded;
+// no URL, header, response body, arbitrary method, or exception is retained.
+function startupTrace() {
+  const methods = new Set(["Target.createBrowserContext", "Target.setAutoAttach", "Target.createTarget", "Target.attachedToTarget",
+    "Target.detachedFromTarget", "Target.targetCrashed", "Inspector.detached", "Network.enable", "Network.setCacheDisabled",
+    "Network.setBypassServiceWorker", "Network.requestWillBeSent", "Network.responseReceived", "Network.requestServedFromCache",
+    "Network.loadingFinished", "Network.loadingFailed", "Network.getResponseBody", "Fetch.enable", "Fetch.requestPaused",
+    "Fetch.getResponseBody", "Fetch.continueRequest", "Runtime.enable", "Runtime.runIfWaitingForDebugger", "Runtime.consoleAPICalled",
+    "Page.enable", "Page.navigate", "Debugger.enable", "Debugger.setInstrumentationBreakpoint", "Debugger.scriptParsed",
+    "Debugger.paused", "Debugger.resumed", "Debugger.getScriptSource", "Debugger.removeBreakpoint", "Debugger.resume",
+    "probe.worker-setup", "probe.bootstrap-fetch", "probe.bootstrap-instrumentation", "probe.import-body"]);
+  const ids = new Map(), events = []; let sequence = 0, dropped = 0, identityLimitReached = false;
+  const alias = value => {
+    if (typeof value !== "string" || !value || value.length > 128) return null;
+    if (!ids.has(value)) {
+      if (ids.size === 32) { identityLimitReached = true; return null; }
+      ids.set(value, `i${ids.size + 1}`);
+    }
+    return ids.get(value);
+  };
+  return {
+    record(method, phase, session, p = {}, state = {}) {
+      const checks = { pagePresent: typeof state.page === "string", workerPresent: typeof state.worker === "string",
+        originalPresent: typeof state.original === "string", workerTargetPresent: typeof state.workerTarget === "string",
+        sessionIsPage: session === state.page, sessionIsWorker: session === state.worker };
+      if (phase === "event") {
+        const bootstrapUrlMatches = p.request?.url === `${state.origin}/bootstrap.js`;
+        if (method === "Target.attachedToTarget") Object.assign(checks, {
+          rootSession: !session, targetIsPage: p.targetInfo?.type === "page", targetIsWorker: p.targetInfo?.type === "worker",
+          pageAbsent: !state.page, workerAbsent: !state.worker, childSessionIsString: typeof p.sessionId === "string",
+          contextMatches: p.targetInfo?.browserContextId === state.context, parentMatchesPage: p.targetInfo?.parentId === state.pageTarget,
+          targetEqualsOriginal: p.targetInfo?.targetId === state.original, waitingForDebugger: p.waitingForDebugger === true });
+        if (method === "Network.requestWillBeSent") Object.assign(checks, {
+          bootstrapUrlMatches, getMethod: p.request?.method === "GET", redirectAbsent: !p.redirectResponse, originalAbsent: !state.original });
+        if (method === "Fetch.requestPaused") Object.assign(checks, {
+          firstPauseCandidate: state.pauseCount + 1 === 1, networkIdEqualsOriginal: p.networkId === state.original,
+          originalEqualsWorkerTarget: state.original === state.workerTarget, bootstrapUrlMatches, getMethod: p.request?.method === "GET",
+          status200: p.responseStatusCode === 200, responseErrorAbsent: !p.responseErrorReason, redirectedRequestAbsent: !p.redirectedRequestId,
+          responseHeadersArray: Array.isArray(p.responseHeaders), responseHeadersWithinBound: Array.isArray(p.responseHeaders) && p.responseHeaders.length <= 32 });
+        if (method === "Debugger.paused") Object.assign(checks, {
+          firstInstrumentationPause: !state.facts?.instrumentationPauseObserved, instrumentationReason: p.reason === "instrumentation",
+          scriptIdIsString: typeof p.data?.scriptId === "string", callFrameScriptMatches: p.callFrames?.[0]?.location?.scriptId === p.data?.scriptId,
+          hitBreakpointsEmpty: Array.isArray(p.hitBreakpoints) && p.hitBreakpoints.length === 0, oneParsedScript: state.scripts?.length === 1,
+          initialScriptMatches: state.scripts?.[0]?.id === p.data?.scriptId, initialScriptUrlMatches: state.scripts?.[0]?.url === `${state.origin}/bootstrap.js` });
+        if (method === "Debugger.scriptParsed") checks.scriptWithinBound = state.scripts?.length < 8;
+        if (method === "Debugger.resumed") checks.finalReleaseSent = state.facts?.setupAcksBeforeFinalResume === true;
+        if (["Network.responseReceived", "Network.loadingFinished"].includes(method)) {
+          const entry = state.requests?.get(p.requestId);
+          Object.assign(checks, { requestEqualsOriginal: p.requestId === state.original, requestTracked: Boolean(entry),
+            responseAlreadySeen: entry?.response === true, completionAlreadySeen: entry?.completed === true,
+            status200: p.response?.status === 200, responseUrlMatches: Boolean(entry) && p.response?.url === state.origin + entry.key });
+        }
+      }
+      const event = Object.freeze({ sequence: sequence = Math.min(sequence + 1, 1024), method: methods.has(method) ? method : "other",
+        phase: ["event", "send", "ack", "reject"].includes(phase) ? phase : "other", session: alias(session),
+        childSession: alias(p.sessionId), request: alias(p.requestId), network: alias(p.networkId),
+        target: alias(p.targetInfo?.targetId), parent: alias(p.targetInfo?.parentId),
+        expectedOriginal: alias(state.original), expectedWorkerTarget: alias(state.workerTarget), checks: Object.freeze(checks) });
+      events.push(event); if (events.length > 32) { events.shift(); dropped = Math.min(dropped + 1, 1024); }
+    },
+    snapshot() { return Object.freeze({ events: Object.freeze([...events]), droppedEvents: dropped, identityLimitReached }); },
+  };
+}
+
 async function startupProbe(connection, origin, serverCounts, { firstDelayMs = 150, holdDelayMs = 100, completionMs = 10000, facts = newFacts() } = {}) { let context, page, pageTarget, worker, workerTarget, original, pauseCount = 0;
   let released = false, setup = [], breakpoint, failure, eventCount = 0, finished = false;
   const requests = new Map(), scripts = []; const tasks = new Set();
+  const trace = startupTrace();
+  const traceState = () => ({ context, page, pageTarget, worker, workerTarget, original, pauseCount, origin, requests, scripts, facts });
   let resolveDone, rejectDone; const done = new Promise((resolve, reject) => { resolveDone = resolve; rejectDone = reject; });
   // Prevent a rejection before the finish waiter is installed becoming unhandled.
   done.catch(() => {});
@@ -185,8 +251,16 @@ async function startupProbe(connection, origin, serverCounts, { firstDelayMs = 1
   const maybeDone = () => {
     if (facts.workerMessageObserved && facts.creatorFetchBodyMatches && facts.continuedWithoutOverrides && facts.importBodyMatches && facts.wasmBodyMatches) resolveDone();
   };
-  const task = promise => { tasks.add(promise); promise.catch(() => fail("probe-protocol-operation-failed")).finally(() => tasks.delete(promise)); };
-  const send = (method, params = {}, session = page) => connection.send(method, params, session);
+  const task = (promise, label, session) => { tasks.add(promise); promise.catch(() => {
+    trace.record(label, "reject", session, {}, traceState()); fail("probe-protocol-operation-failed");
+  }).finally(() => tasks.delete(promise)); };
+  const dispatch = (method, params = {}, session) => {
+    trace.record(method, "send", session, {}, traceState());
+    return connection.send(method, params, session).then(result => {
+      trace.record(method, "ack", session, {}, traceState()); return result;
+    }, error => { trace.record(method, "reject", session, {}, traceState()); throw error; });
+  };
+  const send = (method, params = {}, session = page) => dispatch(method, params, session);
   const controls = session => CONTROL_NAMES.map((name, index) => send(name, index === 1 ? { cacheDisabled: true } : index === 2 ? { bypass: true } : {}, session));
   const decode = (response, expected) => {
     if (typeof response.body !== "string" || response.body.length > 8192 || typeof response.base64Encoded !== "boolean") throw problem("body-shape-invalid");
@@ -198,6 +272,7 @@ async function startupProbe(connection, origin, serverCounts, { firstDelayMs = 1
     if (failure || finished) return;
     if (++eventCount > 256) { fail("probe-event-bound"); return; }
     const { method, params: p, sessionId: session } = event;
+    trace.record(method, "event", session, p, traceState());
     if (["Target.detachedFromTarget", "Target.targetCrashed", "Inspector.detached"].includes(method)) { fail("probe-target-lifecycle-lost"); return; }
     if (method === "Target.attachedToTarget") {
       if (!session && p.targetInfo?.type === "page" && !page && p.targetInfo.browserContextId === context && p.waitingForDebugger === true) {
@@ -217,7 +292,7 @@ async function startupProbe(connection, origin, serverCounts, { firstDelayMs = 1
         facts.childSetupAcksBeforeFirstResume = Math.min(facts.childSetupAcksBeforeFirstResume, 3);
         released = true; facts.stage = "first-resume-sent";
         await send("Runtime.runIfWaitingForDebugger", {}, worker);
-      })()); return;
+      })(), "probe.worker-setup", worker); return;
     }
     if (session !== page && session !== worker) return;
     if (method === "Network.requestWillBeSent") {
@@ -250,7 +325,7 @@ async function startupProbe(connection, origin, serverCounts, { firstDelayMs = 1
         decode(await send("Fetch.getResponseBody", { requestId: p.requestId }), BOOTSTRAP);
         facts.creatorFetchBodyMatches = true; facts.stage = "bootstrap-body-captured";
         await send("Fetch.continueRequest", { requestId: p.requestId }); facts.continuedWithoutOverrides = true; maybeDone();
-      })()); return;
+      })(), "probe.bootstrap-fetch", page); return;
     }
     if (session === worker && method === "Debugger.scriptParsed") {
       if (scripts.length >= 8) { fail("probe-script-bound"); return; }
@@ -274,7 +349,7 @@ async function startupProbe(connection, origin, serverCounts, { firstDelayMs = 1
         facts.cacheDisabledAcknowledged = true; facts.bypassServiceWorkerAcknowledged = true;
         facts.setupAcksBeforeFinalResume = true; facts.stage = "final-resume-sent";
         await send("Debugger.resume", {}, worker);
-      })()); return;
+      })(), "probe.bootstrap-instrumentation", worker); return;
     }
     if (session === worker && method === "Debugger.resumed" && !facts.setupAcksBeforeFinalResume) { fail("probe-unsolicited-resume"); return; }
     if (method === "Network.loadingFailed") { fail("probe-network-failed"); return; }
@@ -285,7 +360,7 @@ async function startupProbe(connection, origin, serverCounts, { firstDelayMs = 1
       task((async () => {
         decode(await send("Network.getResponseBody", { requestId: p.requestId }, worker), BODIES[entry.key]);
         facts[entry.key === "/worker.wasm" ? "wasmBodyMatches" : "importBodyMatches"] = true; maybeDone();
-      })());
+      })(), "probe.import-body", worker);
     }
     if (session === page && method === "Runtime.consoleAPICalled" && p.type === "log" && p.args?.length === 1 && p.args[0].value === "owned-worker-done") {
       if (facts.workerMessageObserved || !facts.setupAcksBeforeFinalResume) { fail("probe-worker-message-invalid"); return; }
@@ -296,12 +371,12 @@ async function startupProbe(connection, origin, serverCounts, { firstDelayMs = 1
   const transportFailed = () => fail("probe-transport-failed");
   connection.on("event", listener); connection.on("failure", transportFailed);
   try {
-    context = (await connection.send("Target.createBrowserContext", { disposeOnDetach: true })).browserContextId;
+    context = (await dispatch("Target.createBrowserContext", { disposeOnDetach: true })).browserContextId;
     if (typeof context !== "string") throw problem("probe-context-missing"); facts.freshContextCreated = true;
-    await connection.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true,
+    await dispatch("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true,
       filter: [{ type: "page", exclude: false }, { exclude: true }] });
     facts.stage = "page-setup";
-    const target = await connection.send("Target.createTarget", { url: "about:blank", browserContextId: context });
+    const target = await dispatch("Target.createTarget", { url: "about:blank", browserContextId: context });
     if (!page || target.targetId !== pageTarget) throw problem("probe-page-attachment-missing");
     await Promise.all([...controls(page), send("Runtime.enable"), send("Page.enable"),
       send("Fetch.enable", { patterns: [{ urlPattern: `${origin}/bootstrap.js`, requestStage: "Response" }] }),
@@ -317,6 +392,7 @@ async function startupProbe(connection, origin, serverCounts, { firstDelayMs = 1
     facts.capability = "classic-bootstrap-second-gate-observed"; facts.stage = "protocol-evidence-complete";
     return facts;
   } finally {
+    facts.startupTrace = trace.snapshot();
     finished = true; connection.off("event", listener); connection.off("failure", transportFailed);
     // Owned browser teardown removes the fresh context even if a session failed.
 
@@ -337,6 +413,8 @@ class ProbeProtocolMock extends EventEmitter {
     }
     if (method === "Page.navigate") {
       this.event("Network.requestWillBeSent", { requestId: "bootstrap-id", request: { url: "http://fixture/bootstrap.js", method: "GET" } });
+      if (this.mode === "fetch-before-attach") this.event("Fetch.requestPaused", { requestId: "fetch-id", networkId: "bootstrap-id",
+        request: { url: "http://fixture/bootstrap.js", method: "GET" }, responseStatusCode: 200, responseHeaders: [] });
       this.event("Target.attachedToTarget", { sessionId: "worker", waitingForDebugger: true,
         targetInfo: { type: "worker", parentId: this.mode === "foreign-parent" ? "foreign" : "page-target", targetId: "bootstrap-id" } });
       return {};
@@ -434,6 +512,63 @@ test("cleanup permits bounded normal group reaping without signaling an exited l
     groupPresent: () => ++checks < 3, pause: async () => pauses++, groupSignal: () => { throw new Error("stale group signal"); },
   });
   expect(pauses).toBe(2);
+});
+
+test.describe("bounded all-startup rejection trace", () => {
+  test("aliases and fixed checks redact arbitrary protocol data and bound map/ring", () => {
+    const trace = startupTrace(), secret = "https://secret.invalid/?token=private";
+    for (let i = 0; i < 100; i++) trace.record(secret, secret, `session-${i}`, {
+      requestId: `request-${i}`, networkId: secret, request: { url: secret, body: secret }, responseHeaders: [{ name: secret, value: secret }], error: secret,
+    });
+    const snapshot = trace.snapshot();
+    expect(snapshot.events).toHaveLength(32); expect(snapshot.droppedEvents).toBe(68); expect(snapshot.identityLimitReached).toBe(true);
+    expect(snapshot.events.every(event => event.method === "other" && event.phase === "other")).toBe(true);
+    expect(JSON.stringify(snapshot)).not.toMatch(/secret|private|token|https|request-[0-9]|session-[0-9]/);
+    expect(Object.isFrozen(snapshot) && Object.isFrozen(snapshot.events) && Object.isFrozen(snapshot.events[0]) && Object.isFrozen(snapshot.events[0].checks)).toBe(true);
+    trace.record("Fetch.requestPaused", "event", "later"); expect(snapshot.events).toHaveLength(32); expect(snapshot.droppedEvents).toBe(68);
+  });
+  test("exact equality and ID aliases identify original/target association without raw IDs", () => {
+    const trace = startupTrace();
+    trace.record("Fetch.requestPaused", "event", "owned-page", { requestId: "interception", networkId: "bootstrap-original",
+      request: { url: "http://fixture/bootstrap.js", method: "GET" }, responseStatusCode: 200, responseHeaders: [] },
+    { page: "owned-page", worker: "owned-worker", original: "bootstrap-original", workerTarget: "bootstrap-original", pauseCount: 0, origin: "http://fixture" });
+    const event = trace.snapshot().events[0];
+    expect(event.network).toBe(event.expectedOriginal); expect(event.expectedOriginal).toBe(event.expectedWorkerTarget);
+    expect(event.checks.networkIdEqualsOriginal && event.checks.originalEqualsWorkerTarget && event.checks.status200).toBe(true);
+    expect(JSON.stringify(event)).not.toContain("bootstrap-original");
+  });
+  test("Fetch-before-attach remains rejected and exposes each unchanged guard result", async () => {
+    const connection = new ProbeProtocolMock("fetch-before-attach"), facts = newFacts();
+    await expect(startupProbe(connection, "http://fixture", connection.counts, { ...MOCK_TIMING, facts })).rejects.toThrow("probe-fetch-owner-mismatch");
+    const events = facts.startupTrace.events, fetch = events.find(event => event.method === "Fetch.requestPaused");
+    expect(fetch.checks).toMatchObject({ originalPresent: true, workerTargetPresent: false, sessionIsPage: true,
+      networkIdEqualsOriginal: true, originalEqualsWorkerTarget: false, bootstrapUrlMatches: true, getMethod: true,
+      firstPauseCandidate: true, status200: true, responseErrorAbsent: true, redirectedRequestAbsent: true,
+      responseHeadersArray: true, responseHeadersWithinBound: true });
+    expect(events.some(event => event.method === "Network.requestWillBeSent" && event.sequence < fetch.sequence)).toBe(true);
+    expect(events.filter(event => event.method === "Target.attachedToTarget" && event.checks.targetIsWorker)).toHaveLength(0);
+    expect(connection.commands.some(command => command.method === "Fetch.getResponseBody")).toBe(false);
+  });
+  for (const mode of ["foreign-parent", "missing-bootstrap", "wrong-bootstrap-body", "wrong-pause", "early-import", "detach", "late-worker", "missing-import", "missing-wasm", "missing-body"]) {
+    test(`fixed frozen trace survives ${mode} rejection`, async () => {
+      const connection = new ProbeProtocolMock(mode), facts = newFacts();
+      await expect(startupProbe(connection, "http://fixture", connection.counts, { ...MOCK_TIMING, facts })).rejects.toThrow(/^owned-cdp:/);
+      expect(facts.startupTrace.events.length).toBeGreaterThan(0); expect(facts.startupTrace.events.length).toBeLessThanOrEqual(32);
+      expect(Object.isFrozen(facts.startupTrace)).toBe(true);
+      const encoded = JSON.stringify(facts.startupTrace); connection.event("arbitrary secret event", { token: "private" });
+      expect(JSON.stringify(facts.startupTrace)).toBe(encoded); expect(encoded).not.toMatch(/https:|token=secret|untrusted/);
+      if (mode === "wrong-bootstrap-body") expect(facts.startupTrace.events.some(event => event.method === "probe.bootstrap-fetch" && event.phase === "reject")).toBe(true);
+    });
+  }
+  test("root setup command rejection retains fixed method but not arbitrary error text", async () => {
+    const connection = new ProbeProtocolMock(), facts = newFacts();
+    connection.send = async () => { throw new Error("https://secret.invalid/?token=private body"); };
+    await expect(startupProbe(connection, "http://fixture", {}, { ...MOCK_TIMING, facts })).rejects.toThrow();
+    expect(facts.startupTrace.events.map(event => [event.method, event.phase])).toEqual([
+      ["Target.createBrowserContext", "send"], ["Target.createBrowserContext", "reject"],
+    ]);
+    expect(JSON.stringify(facts.startupTrace)).not.toMatch(/secret|private|token|body|https/);
+  });
 });
 
 test.describe("read-only launch prerequisite diagnostics", () => {
