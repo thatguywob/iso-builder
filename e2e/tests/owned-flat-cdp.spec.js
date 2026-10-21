@@ -1,7 +1,8 @@
 // Test-only protocol capability probe, never a qualification collector.
 // Falsification: foreign PID/inode/session, unsafe port files, missing bootstrap,
 // import/WASM bytes, wrong pause, early execution, detach and incomplete cleanup
-// must fail. Unknown cache/SW flags stay unknown; mocks do not prove Chromium.
+// must fail, as must missing/mismatched/replayed provisional bootstrap ownership.
+// Unknown cache/SW flags stay unknown; mocks do not prove Chromium.
 const { test, expect } = require("@playwright/test");
 const { EventEmitter } = require("node:events");
 const fs = require("node:fs/promises");
@@ -138,6 +139,7 @@ function newFacts() {
   return { profile: "owned-flat-cdp-startup-probe/1", completeCoverage: false, collectorProofEstablished: false,
     stage: "launch", childSetupAcksBeforeFirstResume: 0, setupAcksBeforeFinalResume: false, instrumentationPauseObserved: false,
     pauseSourceMatchesBootstrap: false, creatorFetchBodyMatches: false, continuedWithoutOverrides: false,
+    bootstrapTargetBound: false, creatorFetchBeforeWorkerAttach: null,
     importBodyMatches: false, wasmBodyMatches: false, workerMessageObserved: false,
     earlyImportOrWasm: false, networkResponseSeen: false, fromDiskCache: null, fromPrefetchCache: null,
     fromServiceWorker: null, freshContextCreated: false, cacheDisabledAcknowledged: false,
@@ -155,14 +157,14 @@ function recordBootstrapFlags(facts, response) {
 }
 function assertProbeEvidence(facts) {
   for (const name of ["setupAcksBeforeFinalResume", "instrumentationPauseObserved", "pauseSourceMatchesBootstrap",
-    "creatorFetchBodyMatches", "continuedWithoutOverrides", "importBodyMatches", "wasmBodyMatches", "workerMessageObserved",
+    "creatorFetchBodyMatches", "continuedWithoutOverrides", "bootstrapTargetBound", "importBodyMatches", "wasmBodyMatches", "workerMessageObserved",
     "freshContextCreated", "cacheDisabledAcknowledged", "bypassServiceWorkerAcknowledged"]) {
     if (facts[name] !== true) throw problem("probe-evidence-incomplete");
   }
   if (facts.earlyImportOrWasm) throw problem("execution-before-owned-release");
   return facts;
 }
-for (const missing of ["creatorFetchBodyMatches", "importBodyMatches", "wasmBodyMatches", "instrumentationPauseObserved", "workerMessageObserved"]) {
+for (const missing of ["bootstrapTargetBound", "creatorFetchBodyMatches", "importBodyMatches", "wasmBodyMatches", "instrumentationPauseObserved", "workerMessageObserved"]) {
   test(`owned probe rejects missing ${missing}`, () => {
     const facts = newFacts(); for (const key of Object.keys(facts)) if (typeof facts[key] === "boolean") facts[key] = true;
     facts.earlyImportOrWasm = false; facts[missing] = false;
@@ -240,7 +242,7 @@ function startupTrace() {
 }
 
 async function startupProbe(connection, origin, serverCounts, { firstDelayMs = 150, holdDelayMs = 100, completionMs = 10000, facts = newFacts() } = {}) { let context, page, pageTarget, worker, workerTarget, original, pauseCount = 0;
-  let released = false, setup = [], breakpoint, failure, eventCount = 0, finished = false;
+  let released = false, setup = [], breakpoint, failure, eventCount = 0, finished = false, bootstrap;
   const requests = new Map(), scripts = []; const tasks = new Set();
   const trace = startupTrace();
   const traceState = () => ({ context, page, pageTarget, worker, workerTarget, original, pauseCount, origin, requests, scripts, facts });
@@ -249,7 +251,7 @@ async function startupProbe(connection, origin, serverCounts, { firstDelayMs = 1
   done.catch(() => {});
   const fail = code => { if (!failure) { failure = problem(code); rejectDone(failure); } };
   const maybeDone = () => {
-    if (facts.workerMessageObserved && facts.creatorFetchBodyMatches && facts.continuedWithoutOverrides && facts.importBodyMatches && facts.wasmBodyMatches) resolveDone();
+    if (facts.bootstrapTargetBound && facts.workerMessageObserved && facts.creatorFetchBodyMatches && facts.continuedWithoutOverrides && facts.importBodyMatches && facts.wasmBodyMatches) resolveDone();
   };
   const task = (promise, label, session) => { tasks.add(promise); promise.catch(() => {
     trace.record(label, "reject", session, {}, traceState()); fail("probe-protocol-operation-failed");
@@ -278,9 +280,12 @@ async function startupProbe(connection, origin, serverCounts, { firstDelayMs = 1
       if (!session && p.targetInfo?.type === "page" && !page && p.targetInfo.browserContextId === context && p.waitingForDebugger === true) {
         page = p.sessionId; pageTarget = p.targetInfo.targetId; return;
       }
-      if (session !== page || worker || p.targetInfo?.type !== "worker" || p.targetInfo.parentId !== pageTarget ||
-          p.targetInfo.targetId !== original || p.waitingForDebugger !== true || typeof p.sessionId !== "string") { fail("probe-worker-owner-mismatch"); return; }
+      if (session !== page || worker || !original || typeof pageTarget !== "string" || !pageTarget ||
+          p.targetInfo?.type !== "worker" || p.targetInfo.parentId !== pageTarget ||
+          p.targetInfo.targetId !== original || p.waitingForDebugger !== true || typeof p.sessionId !== "string" || !p.sessionId) { fail("probe-worker-owner-mismatch"); return; }
+      if (bootstrap && (bootstrap.page !== page || bootstrap.original !== p.targetInfo.targetId)) { fail("probe-worker-owner-mismatch"); return; }
       worker = p.sessionId; workerTarget = p.targetInfo.targetId; facts.stage = "worker-attached";
+      if (bootstrap) facts.bootstrapTargetBound = true;
       task((async () => {
         setup = controls(worker).map(promise => promise.then(value => { if (!released) facts.childSetupAcksBeforeFirstResume++; return value; }));
         // Register the second execution gate before queuing the first resume.
@@ -289,15 +294,17 @@ async function startupProbe(connection, origin, serverCounts, { firstDelayMs = 1
         setup.push(install); setup.forEach(promise => promise.catch(() => fail("probe-child-setup-failed"))); install.then(value => { breakpoint = value.breakpointId; }, () => {});
         // This interval measures the actual fetch-throttle/renderer dependency.
         await wait(firstDelayMs);
+        if (failure || finished) return;
         facts.childSetupAcksBeforeFirstResume = Math.min(facts.childSetupAcksBeforeFirstResume, 3);
         released = true; facts.stage = "first-resume-sent";
         await send("Runtime.runIfWaitingForDebugger", {}, worker);
       })(), "probe.worker-setup", worker); return;
     }
+    if (method === "Fetch.requestPaused" && session !== page) { fail("probe-fetch-owner-mismatch"); return; }
     if (session !== page && session !== worker) return;
     if (method === "Network.requestWillBeSent") {
       if (session === page && p.request?.url === `${origin}/bootstrap.js`) {
-        if (original || p.redirectResponse || p.request.method !== "GET") { fail("probe-bootstrap-request-invalid"); return; }
+        if (original || typeof p.requestId !== "string" || !p.requestId || p.redirectResponse || p.request.method !== "GET") { fail("probe-bootstrap-request-invalid"); return; }
         original = p.requestId; return;
       }
       if (session === worker && p.request?.url !== `${origin}/bootstrap.js`) {
@@ -317,14 +324,22 @@ async function startupProbe(connection, origin, serverCounts, { firstDelayMs = 1
     }
     if (method === "Network.requestServedFromCache" && p.requestId === original) facts.bootstrapServedFromCacheEvent = true;
     if (method === "Fetch.requestPaused") {
-      if (session !== page || ++pauseCount !== 1 || p.networkId !== original || original !== workerTarget ||
+      // Chromium can pause the creator response before constructing the worker
+      // target. Keep one provisional identity; continuing these exact bytes may
+      // be necessary for attachment. Only the later owned attachment binds it.
+      if (session !== page || ++pauseCount !== 1 || !original || bootstrap || typeof p.requestId !== "string" || !p.requestId ||
+          p.networkId !== original || (workerTarget !== undefined && original !== workerTarget) ||
           p.request?.url !== `${origin}/bootstrap.js` || p.request.method !== "GET" || p.responseStatusCode !== 200 || p.responseErrorReason ||
           p.redirectedRequestId || !Array.isArray(p.responseHeaders) || p.responseHeaders.length > 32) { fail("probe-fetch-owner-mismatch"); return; }
+      bootstrap = Object.freeze({ page, original, fetch: p.requestId });
+      facts.creatorFetchBeforeWorkerAttach = !worker;
+      if (worker) facts.bootstrapTargetBound = true;
       facts.stage = "bootstrap-fetch-paused";
       task((async () => {
-        decode(await send("Fetch.getResponseBody", { requestId: p.requestId }), BOOTSTRAP);
+        decode(await send("Fetch.getResponseBody", { requestId: bootstrap.fetch }, bootstrap.page), BOOTSTRAP);
+        if (failure || finished) return;
         facts.creatorFetchBodyMatches = true; facts.stage = "bootstrap-body-captured";
-        await send("Fetch.continueRequest", { requestId: p.requestId }); facts.continuedWithoutOverrides = true; maybeDone();
+        await send("Fetch.continueRequest", { requestId: bootstrap.fetch }, bootstrap.page); facts.continuedWithoutOverrides = true; maybeDone();
       })(), "probe.bootstrap-fetch", page); return;
     }
     if (session === worker && method === "Debugger.scriptParsed") {
@@ -345,6 +360,7 @@ async function startupProbe(connection, origin, serverCounts, { firstDelayMs = 1
         await send("Debugger.removeBreakpoint", { breakpointId: breakpoint }, worker);
         // Deliberate second delay: no immediate imports/WASM may run while held.
         await wait(holdDelayMs);
+        if (failure || finished) return;
         if (requests.size || serverCounts["/worker-import.js"] || serverCounts["/worker.wasm"] || facts.workerMessageObserved) throw problem("execution-before-owned-release");
         facts.cacheDisabledAcknowledged = true; facts.bypassServiceWorkerAcknowledged = true;
         facts.setupAcksBeforeFinalResume = true; facts.stage = "final-resume-sent";
@@ -401,7 +417,7 @@ async function startupProbe(connection, origin, serverCounts, { firstDelayMs = 1
 
 // Executes the actual probe event handlers, without a browser or a socket.
 class ProbeProtocolMock extends EventEmitter {
-  constructor(mode = "valid") { super(); this.mode = mode; this.commands = []; this.queued = []; this.counts = {}; }
+  constructor(mode = "valid", { fetchFirst = false } = {}) { super(); this.mode = mode; this.fetchFirst = fetchFirst; this.commands = []; this.queued = []; this.counts = {}; }
   event(method, params, sessionId = "page") { this.emit("event", { method, params, sessionId: sessionId === null ? undefined : sessionId }); }
   async send(method, params = {}, session) {
     this.commands.push({ method, params, session });
@@ -412,28 +428,28 @@ class ProbeProtocolMock extends EventEmitter {
       return { targetId: "page-target" };
     }
     if (method === "Page.navigate") {
-      this.event("Network.requestWillBeSent", { requestId: "bootstrap-id", request: { url: "http://fixture/bootstrap.js", method: "GET" } });
-      if (this.mode === "fetch-before-attach") this.event("Fetch.requestPaused", { requestId: "fetch-id", networkId: "bootstrap-id",
-        request: { url: "http://fixture/bootstrap.js", method: "GET" }, responseStatusCode: 200, responseHeaders: [] });
-      this.event("Target.attachedToTarget", { sessionId: "worker", waitingForDebugger: true,
-        targetInfo: { type: "worker", parentId: this.mode === "foreign-parent" ? "foreign" : "page-target", targetId: "bootstrap-id" } });
+      if (this.mode === "attachment-before-original") this.event("Target.attachedToTarget", { sessionId: "worker", waitingForDebugger: true,
+        targetInfo: { type: "worker", parentId: "page-target" } });
+      if (this.mode !== "missing-original") this.event("Network.requestWillBeSent", { requestId: "bootstrap-id", request: { url: "http://fixture/bootstrap.js", method: "GET" } });
+      if (this.fetchFirst) this.pauseBootstrap(); else this.attachWorker();
       return {};
     }
     if (session === "worker" && [...CONTROL_NAMES, "Debugger.enable", "Debugger.setInstrumentationBreakpoint"].includes(method)) {
       return new Promise(resolve => this.queued.push(() => resolve(method === "Debugger.setInstrumentationBreakpoint" ? { breakpointId: "breakpoint" } : {})));
     }
     if (session === "worker" && method === "Runtime.runIfWaitingForDebugger") {
-      if (this.mode !== "missing-bootstrap") this.event("Fetch.requestPaused", { requestId: "fetch-id", networkId: "bootstrap-id",
-        request: { url: "http://fixture/bootstrap.js", method: "GET" }, responseStatusCode: 200, responseHeaders: [] });
+      if (this.fetchFirst) this.startRenderer(); else if (this.mode !== "missing-bootstrap") this.pauseBootstrap();
       return {};
     }
-    if (method === "Fetch.getResponseBody") return { base64Encoded: true, body: (this.mode === "wrong-bootstrap-body" ? IMPORT : BOOTSTRAP).toString("base64") };
+    if (method === "Fetch.getResponseBody") {
+      if (this.mode === "duplicate-fetch") this.pauseBootstrap();
+      return { base64Encoded: true, body: (this.mode === "wrong-bootstrap-body" ? IMPORT : BOOTSTRAP).toString("base64") };
+    }
     if (method === "Fetch.continueRequest") {
-      this.counts["/bootstrap.js"] = 1; this.queued.forEach(resolve => resolve());
-      if (this.mode === "early-import") this.asset("/worker-import.js", "import-id");
-      this.event("Debugger.scriptParsed", { scriptId: "script", url: "http://fixture/bootstrap.js" }, "worker");
-      this.event("Debugger.paused", { reason: this.mode === "wrong-pause" ? "other" : "instrumentation", data: { scriptId: "script" },
-        callFrames: [{ location: { scriptId: "script" } }], hitBreakpoints: [] }, "worker");
+      this.counts["/bootstrap.js"] = 1;
+      if (this.mode === "replayed-bootstrap") this.event("Network.requestWillBeSent", { requestId: "bootstrap-id", request: { url: "http://fixture/bootstrap.js", method: "GET" } });
+      if (this.fetchFirst) { if (this.mode !== "missing-worker") this.attachWorker(); }
+      else this.startRenderer();
       return {};
     }
     if (method === "Debugger.getScriptSource") return { scriptSource: BOOTSTRAP.toString("ascii") };
@@ -455,6 +471,26 @@ class ProbeProtocolMock extends EventEmitter {
     }
     return {};
   }
+  pauseBootstrap() {
+    this.event("Fetch.requestPaused", { requestId: this.mode === "missing-fetch-id" ? undefined : "fetch-id",
+      networkId: this.mode === "wrong-fetch-network" ? "other-request" : "bootstrap-id",
+      request: { url: "http://fixture/bootstrap.js", method: "GET" }, responseStatusCode: 200, responseHeaders: [] },
+    this.mode === "wrong-fetch-session" ? "foreign-session" : "page");
+  }
+  attachWorker() {
+    const params = { sessionId: this.mode === "empty-worker-session" ? "" : "worker", waitingForDebugger: true,
+      targetInfo: { type: "worker", parentId: this.mode === "foreign-parent" ? "foreign" : "page-target",
+        targetId: this.mode === "future-target-mismatch" ? "other-target" : "bootstrap-id" } };
+    this.event("Target.attachedToTarget", params);
+    if (this.mode === "duplicate-worker") this.event("Target.attachedToTarget", params);
+  }
+  startRenderer() {
+    this.queued.forEach(resolve => resolve());
+    if (this.mode === "early-import") this.asset("/worker-import.js", "import-id");
+    this.event("Debugger.scriptParsed", { scriptId: "script", url: "http://fixture/bootstrap.js" }, "worker");
+    this.event("Debugger.paused", { reason: this.mode === "wrong-pause" ? "other" : "instrumentation", data: { scriptId: "script" },
+      callFrames: [{ location: { scriptId: "script" } }], hitBreakpoints: [] }, "worker");
+  }
   asset(key, id) {
     this.counts[key] = (this.counts[key] || 0) + 1;
     this.event("Network.requestWillBeSent", { requestId: id, request: { url: `http://fixture${key}`, method: "GET" } }, "worker");
@@ -467,6 +503,7 @@ test("owned probe actual handlers distinguish throttle release from final execut
   const connection = new ProbeProtocolMock();
   const facts = await startupProbe(connection, "http://fixture", connection.counts, MOCK_TIMING);
   expect(facts.childSetupAcksBeforeFirstResume).toBe(0);
+  expect(facts.bootstrapTargetBound).toBe(true); expect(facts.creatorFetchBeforeWorkerAttach).toBe(false);
   expect(facts.capability).toBe("classic-bootstrap-second-gate-observed");
   expect(facts.completeCoverage).toBe(false); expect(facts.fromServiceWorker).toBe(null);
   const commands = connection.commands.filter(value => value.session === "worker").map(value => value.method);
@@ -483,6 +520,46 @@ for (const mode of ["foreign-parent", "missing-bootstrap", "wrong-bootstrap-body
   test(`owned probe actual handlers reject ${mode}`, async () => {
     const connection = new ProbeProtocolMock(mode);
     await expect(startupProbe(connection, "http://fixture", connection.counts, MOCK_TIMING)).rejects.toThrow(/^owned-cdp:[a-z-]+$/);
+  });
+}
+test("owned probe binds creator-first capture only after the exact future worker attaches", async () => {
+  const connection = new ProbeProtocolMock("valid", { fetchFirst: true }), facts = newFacts();
+  const send = connection.send.bind(connection); let unboundAtContinuation = false;
+  connection.send = (method, params, session) => {
+    if (method === "Fetch.continueRequest") unboundAtContinuation = facts.bootstrapTargetBound === false;
+    return send(method, params, session);
+  };
+  await startupProbe(connection, "http://fixture", connection.counts, { ...MOCK_TIMING, facts });
+  expect(unboundAtContinuation).toBe(true); expect(facts.bootstrapTargetBound).toBe(true);
+  expect(facts.creatorFetchBeforeWorkerAttach).toBe(true); expect(facts.instrumentationPauseObserved).toBe(true);
+  expect(facts.setupAcksBeforeFinalResume && facts.importBodyMatches && facts.wasmBodyMatches).toBe(true);
+  expect([facts.fromDiskCache, facts.fromPrefetchCache, facts.fromServiceWorker]).toEqual([null, null, null]);
+  expect(facts.completeCoverage || facts.collectorProofEstablished).toBe(false);
+  expect(connection.commands.filter(command => command.method === "Fetch.getResponseBody")).toHaveLength(1);
+  expect(connection.commands.filter(command => command.method === "Fetch.continueRequest")).toEqual([
+    { method: "Fetch.continueRequest", params: { requestId: "fetch-id" }, session: "page" },
+  ]);
+});
+for (const [mode, reason] of [
+  ["attachment-before-original", "probe-worker-owner-mismatch"], ["empty-worker-session", "probe-worker-owner-mismatch"],
+  ["future-target-mismatch", "probe-worker-owner-mismatch"], ["duplicate-worker", "probe-worker-owner-mismatch"],
+  ["foreign-parent", "probe-worker-owner-mismatch"], ["replayed-bootstrap", "probe-bootstrap-request-invalid"],
+  ["duplicate-fetch", "probe-fetch-owner-mismatch"], ["wrong-fetch-session", "probe-fetch-owner-mismatch"],
+  ["wrong-fetch-network", "probe-fetch-owner-mismatch"], ["missing-fetch-id", "probe-fetch-owner-mismatch"],
+  ["missing-original", "probe-fetch-owner-mismatch"], ["late-worker", "probe-worker-owner-mismatch"],
+  ["early-import", "execution-before-owned-release"], ["wrong-pause", "probe-bootstrap-pause-invalid"],
+  ["wrong-bootstrap-body", "probe-protocol-operation-failed"], ["missing-import", "probe-capability-timeout"],
+  ["missing-wasm", "probe-capability-timeout"], ["missing-body", "probe-protocol-operation-failed"],
+  ["detach", "probe-target-lifecycle-lost"],
+]) {
+  test(`provisional creator-first capture rejects ${mode}`, async () => {
+    const connection = new ProbeProtocolMock(mode, { fetchFirst: true }), facts = newFacts();
+    await expect(startupProbe(connection, "http://fixture", connection.counts, { ...MOCK_TIMING, facts })).rejects.toThrow(reason);
+    expect(facts.capability).toBe("unestablished"); expect(facts.completeCoverage || facts.collectorProofEstablished).toBe(false);
+    if (["attachment-before-original", "empty-worker-session", "future-target-mismatch", "foreign-parent", "wrong-fetch-session", "wrong-fetch-network", "missing-original"].includes(mode)) expect(facts.bootstrapTargetBound).toBe(false);
+    if (["duplicate-fetch", "wrong-fetch-session", "wrong-fetch-network", "missing-fetch-id", "missing-original", "wrong-bootstrap-body"].includes(mode)) {
+      expect(connection.commands.some(command => command.method === "Fetch.continueRequest")).toBe(false);
+    }
   });
 }
 test("cleanup rejects a surviving group even after leader and listener exit", async () => {
@@ -537,9 +614,9 @@ test.describe("bounded all-startup rejection trace", () => {
     expect(event.checks.networkIdEqualsOriginal && event.checks.originalEqualsWorkerTarget && event.checks.status200).toBe(true);
     expect(JSON.stringify(event)).not.toContain("bootstrap-original");
   });
-  test("Fetch-before-attach remains rejected and exposes each unchanged guard result", async () => {
-    const connection = new ProbeProtocolMock("fetch-before-attach"), facts = newFacts();
-    await expect(startupProbe(connection, "http://fixture", connection.counts, { ...MOCK_TIMING, facts })).rejects.toThrow("probe-fetch-owner-mismatch");
+  test("provisional creator bytes alone retain the measured Fetch-before-attach trace but cannot succeed", async () => {
+    const connection = new ProbeProtocolMock("missing-worker", { fetchFirst: true }), facts = newFacts();
+    await expect(startupProbe(connection, "http://fixture", connection.counts, { ...MOCK_TIMING, facts })).rejects.toThrow("probe-capability-timeout");
     const events = facts.startupTrace.events, fetch = events.find(event => event.method === "Fetch.requestPaused");
     expect(fetch.checks).toMatchObject({ originalPresent: true, workerTargetPresent: false, sessionIsPage: true,
       networkIdEqualsOriginal: true, originalEqualsWorkerTarget: false, bootstrapUrlMatches: true, getMethod: true,
@@ -547,7 +624,10 @@ test.describe("bounded all-startup rejection trace", () => {
       responseHeadersArray: true, responseHeadersWithinBound: true });
     expect(events.some(event => event.method === "Network.requestWillBeSent" && event.sequence < fetch.sequence)).toBe(true);
     expect(events.filter(event => event.method === "Target.attachedToTarget" && event.checks.targetIsWorker)).toHaveLength(0);
-    expect(connection.commands.some(command => command.method === "Fetch.getResponseBody")).toBe(false);
+    expect(facts.creatorFetchBodyMatches && facts.continuedWithoutOverrides).toBe(true);
+    expect(facts.bootstrapTargetBound).toBe(false); expect(facts.capability).toBe("unestablished");
+    const commands = connection.commands.length; connection.attachWorker();
+    expect(connection.commands).toHaveLength(commands); expect(facts.bootstrapTargetBound).toBe(false);
   });
   for (const mode of ["foreign-parent", "missing-bootstrap", "wrong-bootstrap-body", "wrong-pause", "early-import", "detach", "late-worker", "missing-import", "missing-wasm", "missing-body"]) {
     test(`fixed frozen trace survives ${mode} rejection`, async () => {
