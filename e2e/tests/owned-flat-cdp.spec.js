@@ -139,7 +139,7 @@ function newFacts() {
   return { profile: "owned-flat-cdp-startup-probe/1", completeCoverage: false, collectorProofEstablished: false,
     stage: "launch", childSetupAcksBeforeFirstResume: 0, setupAcksBeforeFinalResume: false, instrumentationPauseObserved: false,
     pauseSourceMatchesBootstrap: false, creatorFetchBodyMatches: false, continuedWithoutOverrides: false,
-    bootstrapTargetBound: false, creatorFetchBeforeWorkerAttach: null,
+    bootstrapTargetBound: false, creatorFetchBeforeWorkerAttach: null, bootstrapWorkerBodyMatches: false,
     importBodyMatches: false, wasmBodyMatches: false, workerMessageObserved: false,
     earlyImportOrWasm: false, networkResponseSeen: false, fromDiskCache: null, fromPrefetchCache: null,
     fromServiceWorker: null, freshContextCreated: false, cacheDisabledAcknowledged: false,
@@ -157,14 +157,14 @@ function recordBootstrapFlags(facts, response) {
 }
 function assertProbeEvidence(facts) {
   for (const name of ["setupAcksBeforeFinalResume", "instrumentationPauseObserved", "pauseSourceMatchesBootstrap",
-    "creatorFetchBodyMatches", "continuedWithoutOverrides", "bootstrapTargetBound", "importBodyMatches", "wasmBodyMatches", "workerMessageObserved",
+    "creatorFetchBodyMatches", "continuedWithoutOverrides", "bootstrapTargetBound", "bootstrapWorkerBodyMatches", "importBodyMatches", "wasmBodyMatches", "workerMessageObserved",
     "freshContextCreated", "cacheDisabledAcknowledged", "bypassServiceWorkerAcknowledged"]) {
     if (facts[name] !== true) throw problem("probe-evidence-incomplete");
   }
   if (facts.earlyImportOrWasm) throw problem("execution-before-owned-release");
   return facts;
 }
-for (const missing of ["bootstrapTargetBound", "creatorFetchBodyMatches", "importBodyMatches", "wasmBodyMatches", "instrumentationPauseObserved", "workerMessageObserved"]) {
+for (const missing of ["bootstrapWorkerBodyMatches", "bootstrapTargetBound", "creatorFetchBodyMatches", "importBodyMatches", "wasmBodyMatches", "instrumentationPauseObserved", "workerMessageObserved"]) {
   test(`owned probe rejects missing ${missing}`, () => {
     const facts = newFacts(); for (const key of Object.keys(facts)) if (typeof facts[key] === "boolean") facts[key] = true;
     facts.earlyImportOrWasm = false; facts[missing] = false;
@@ -187,7 +187,7 @@ function startupTrace() {
     "Fetch.getResponseBody", "Fetch.continueRequest", "Runtime.enable", "Runtime.runIfWaitingForDebugger", "Runtime.consoleAPICalled",
     "Page.enable", "Page.navigate", "Debugger.enable", "Debugger.setInstrumentationBreakpoint", "Debugger.scriptParsed",
     "Debugger.paused", "Debugger.resumed", "Debugger.getScriptSource", "Debugger.removeBreakpoint", "Debugger.resume",
-    "probe.worker-setup", "probe.bootstrap-fetch", "probe.bootstrap-instrumentation", "probe.import-body"]);
+    "probe.worker-setup", "probe.bootstrap-fetch", "probe.bootstrap-instrumentation", "probe.bootstrap-body", "probe.import-body"]);
   const ids = new Map(), events = []; let sequence = 0, dropped = 0, identityLimitReached = false;
   const alias = value => {
     if (typeof value !== "string" || !value || value.length > 128) return null;
@@ -227,7 +227,9 @@ function startupTrace() {
           const entry = state.requests?.get(p.requestId);
           Object.assign(checks, { requestEqualsOriginal: p.requestId === state.original, requestTracked: Boolean(entry),
             responseAlreadySeen: entry?.response === true, completionAlreadySeen: entry?.completed === true,
-            status200: p.response?.status === 200, responseUrlMatches: Boolean(entry) && p.response?.url === state.origin + entry.key });
+            status200: p.response?.status === 200, responseUrlMatches: Boolean(entry) && p.response?.url === state.origin + entry.key,
+            bootstrapResponseUrlMatches: p.response?.url === `${state.origin}/bootstrap.js`,
+            bootstrapResponseAlreadySeen: state.facts?.networkResponseSeen === true, bootstrapCompletionAlreadySeen: state.bootstrapCompleted === true });
         }
       }
       const event = Object.freeze({ sequence: sequence = Math.min(sequence + 1, 1024), method: methods.has(method) ? method : "other",
@@ -242,16 +244,16 @@ function startupTrace() {
 }
 
 async function startupProbe(connection, origin, serverCounts, { firstDelayMs = 150, holdDelayMs = 100, completionMs = 10000, facts = newFacts() } = {}) { let context, page, pageTarget, worker, workerTarget, original, pauseCount = 0;
-  let released = false, setup = [], breakpoint, failure, eventCount = 0, finished = false, bootstrap;
+  let released = false, setup = [], breakpoint, failure, eventCount = 0, finished = false, bootstrap, creatorBootstrapBytes, bootstrapCompleted = false, bootstrapWorkerRequestSeen = false;
   const requests = new Map(), scripts = []; const tasks = new Set();
   const trace = startupTrace();
-  const traceState = () => ({ context, page, pageTarget, worker, workerTarget, original, pauseCount, origin, requests, scripts, facts });
+  const traceState = () => ({ context, page, pageTarget, worker, workerTarget, original, pauseCount, origin, requests, scripts, facts, bootstrapCompleted });
   let resolveDone, rejectDone; const done = new Promise((resolve, reject) => { resolveDone = resolve; rejectDone = reject; });
   // Prevent a rejection before the finish waiter is installed becoming unhandled.
   done.catch(() => {});
   const fail = code => { if (!failure) { failure = problem(code); rejectDone(failure); } };
   const maybeDone = () => {
-    if (facts.bootstrapTargetBound && facts.workerMessageObserved && facts.creatorFetchBodyMatches && facts.continuedWithoutOverrides && facts.importBodyMatches && facts.wasmBodyMatches) resolveDone();
+    if (facts.bootstrapWorkerBodyMatches && facts.bootstrapTargetBound && facts.workerMessageObserved && facts.creatorFetchBodyMatches && facts.continuedWithoutOverrides && facts.importBodyMatches && facts.wasmBodyMatches) resolveDone();
   };
   const task = (promise, label, session) => { tasks.add(promise); promise.catch(() => {
     trace.record(label, "reject", session, {}, traceState()); fail("probe-protocol-operation-failed");
@@ -269,6 +271,7 @@ async function startupProbe(connection, origin, serverCounts, { firstDelayMs = 1
     const bytes = Buffer.from(response.body, response.base64Encoded ? "base64" : "utf8");
     if (response.base64Encoded && bytes.toString("base64") !== response.body) throw problem("body-base64-invalid");
     if (bytes.length > 4096 || !bytes.equals(expected)) throw problem("body-mismatch");
+    return bytes;
   };
   const onEvent = event => {
     if (failure || finished) return;
@@ -301,11 +304,20 @@ async function startupProbe(connection, origin, serverCounts, { firstDelayMs = 1
       })(), "probe.worker-setup", worker); return;
     }
     if (method === "Fetch.requestPaused" && session !== page) { fail("probe-fetch-owner-mismatch"); return; }
+    if (original && p.requestId === original && ["Network.responseReceived", "Network.loadingFinished", "Network.loadingFailed"].includes(method) && session !== worker) {
+      fail("probe-bootstrap-source-invalid"); return;
+    }
     if (session !== page && session !== worker) return;
     if (method === "Network.requestWillBeSent") {
       if (session === page && p.request?.url === `${origin}/bootstrap.js`) {
         if (original || typeof p.requestId !== "string" || !p.requestId || p.redirectResponse || p.request.method !== "GET") { fail("probe-bootstrap-request-invalid"); return; }
         original = p.requestId; return;
+      }
+      if (session === worker && p.request?.url === `${origin}/bootstrap.js`) {
+        if (!facts.bootstrapTargetBound || bootstrapWorkerRequestSeen || p.requestId !== original || p.request.method !== "GET" || p.redirectResponse) {
+          fail("probe-bootstrap-request-invalid"); return;
+        }
+        bootstrapWorkerRequestSeen = true; return;
       }
       if (session === worker && p.request?.url !== `${origin}/bootstrap.js`) {
         const key = Object.keys(BODIES).find(name => name !== "/bootstrap.js" && p.request?.url === origin + name);
@@ -315,7 +327,12 @@ async function startupProbe(connection, origin, serverCounts, { firstDelayMs = 1
       }
     }
     if (method === "Network.responseReceived") {
-      if (p.requestId === original) recordBootstrapFlags(facts, p.response);
+      if (p.requestId === original) {
+        if (!facts.bootstrapTargetBound || p.response?.url !== `${origin}/bootstrap.js` || p.response.status !== 200) {
+          fail("probe-bootstrap-response-invalid"); return;
+        }
+        recordBootstrapFlags(facts, p.response);
+      }
       const entry = requests.get(p.requestId);
       if (entry && session === worker) {
         if (entry.response || p.response?.status !== 200 || p.response.url !== origin + entry.key) { fail("probe-import-response-invalid"); return; }
@@ -336,7 +353,7 @@ async function startupProbe(connection, origin, serverCounts, { firstDelayMs = 1
       if (worker) facts.bootstrapTargetBound = true;
       facts.stage = "bootstrap-fetch-paused";
       task((async () => {
-        decode(await send("Fetch.getResponseBody", { requestId: bootstrap.fetch }, bootstrap.page), BOOTSTRAP);
+        creatorBootstrapBytes = decode(await send("Fetch.getResponseBody", { requestId: bootstrap.fetch }, bootstrap.page), BOOTSTRAP);
         if (failure || finished) return;
         facts.creatorFetchBodyMatches = true; facts.stage = "bootstrap-body-captured";
         await send("Fetch.continueRequest", { requestId: bootstrap.fetch }, bootstrap.page); facts.continuedWithoutOverrides = true; maybeDone();
@@ -369,6 +386,18 @@ async function startupProbe(connection, origin, serverCounts, { firstDelayMs = 1
     }
     if (session === worker && method === "Debugger.resumed" && !facts.setupAcksBeforeFinalResume) { fail("probe-unsolicited-resume"); return; }
     if (method === "Network.loadingFailed") { fail("probe-network-failed"); return; }
+    if (session === worker && method === "Network.loadingFinished" && p.requestId === original) {
+      if (!facts.bootstrapTargetBound || !facts.networkResponseSeen || bootstrapCompleted) { fail("probe-bootstrap-completion-invalid"); return; }
+      bootstrapCompleted = true;
+      task((async () => {
+        // Read from the actual completing worker, never substitute the creator
+        // capture for an unavailable Network body or fetch the URL a second time.
+        const bytes = decode(await send("Network.getResponseBody", { requestId: original }, worker), BOOTSTRAP);
+        if (failure || finished) return;
+        if (!creatorBootstrapBytes || !bytes.equals(creatorBootstrapBytes)) throw problem("probe-bootstrap-body-mismatch");
+        facts.bootstrapWorkerBodyMatches = true; maybeDone();
+      })(), "probe.bootstrap-body", worker); return;
+    }
     if (session === worker && method === "Network.loadingFinished" && requests.has(p.requestId)) {
       const entry = requests.get(p.requestId);
       if (!entry.response || entry.completed) { fail("probe-import-completion-invalid"); return; }
@@ -452,7 +481,7 @@ class ProbeProtocolMock extends EventEmitter {
       else this.startRenderer();
       return {};
     }
-    if (method === "Debugger.getScriptSource") return { scriptSource: BOOTSTRAP.toString("ascii") };
+    if (method === "Debugger.getScriptSource") return { scriptSource: (this.mode === "wrong-bootstrap-source" ? IMPORT : BOOTSTRAP).toString("ascii") };
     if (method === "Debugger.resume") {
       this.event("Debugger.resumed", {}, "worker");
       if (this.mode === "detach") this.event("Target.detachedFromTarget", { sessionId: "worker" });
@@ -462,10 +491,17 @@ class ProbeProtocolMock extends EventEmitter {
       if (this.mode === "message-before-bodies") await wait(2);
       if (this.mode !== "missing-import") this.asset("/worker-import.js", "import-id");
       if (this.mode !== "missing-wasm") this.asset("/worker.wasm", "wasm-id");
+      this.completeBootstrap();
       if (this.mode !== "message-before-bodies") this.event("Runtime.consoleAPICalled", { type: "log", args: [{ value: "owned-worker-done" }] });
       return {};
     }
     if (method === "Network.getResponseBody") {
+      if (params.requestId === "bootstrap-id") {
+        if (session !== "worker") throw new Error("bootstrap read on wrong session");
+        if (this.mode === "missing-bootstrap-worker-body") throw new Error("untrusted https://host/?token=secret body");
+        if (this.mode === "late-bootstrap-worker-body") await wait(80);
+        return { base64Encoded: true, body: (this.mode === "wrong-bootstrap-worker-body" ? Buffer.concat([Buffer.from("x"), BOOTSTRAP.subarray(1)]) : BOOTSTRAP).toString("base64") };
+      }
       if (this.mode === "missing-body") throw new Error("untrusted https://host/?token=secret body");
       return { base64Encoded: true, body: (params.requestId === "wasm-id" ? WASM : IMPORT).toString("base64") };
     }
@@ -486,10 +522,30 @@ class ProbeProtocolMock extends EventEmitter {
   }
   startRenderer() {
     this.queued.forEach(resolve => resolve());
+    const request = { requestId: this.mode === "wrong-worker-bootstrap-id" ? "other-id" : "bootstrap-id",
+      request: { url: "http://fixture/bootstrap.js", method: this.mode === "wrong-worker-bootstrap-method" ? "POST" : "GET" },
+      redirectResponse: this.mode === "redirected-worker-bootstrap" ? {} : undefined };
+    this.event("Network.requestWillBeSent", request, "worker");
+    if (this.mode === "duplicate-worker-bootstrap-request") this.event("Network.requestWillBeSent", request, "worker");
+    if (this.mode === "bootstrap-completion-before-response") this.completeBootstrap();
+    if (this.mode !== "missing-bootstrap-response") {
+      const response = { requestId: this.mode === "wrong-bootstrap-response-id" ? "other-id" : "bootstrap-id",
+        response: { status: this.mode === "wrong-bootstrap-status" ? 201 : 200,
+          url: this.mode === "wrong-bootstrap-url" ? "http://fixture/other.js" : "http://fixture/bootstrap.js" } };
+      this.event("Network.responseReceived", response, this.mode === "wrong-bootstrap-response-session" ? "foreign" : "worker");
+      if (this.mode === "duplicate-bootstrap-response") this.event("Network.responseReceived", response, "worker");
+    }
     if (this.mode === "early-import") this.asset("/worker-import.js", "import-id");
     this.event("Debugger.scriptParsed", { scriptId: "script", url: "http://fixture/bootstrap.js" }, "worker");
     this.event("Debugger.paused", { reason: this.mode === "wrong-pause" ? "other" : "instrumentation", data: { scriptId: "script" },
       callFrames: [{ location: { scriptId: "script" } }], hitBreakpoints: [] }, "worker");
+  }
+  completeBootstrap() {
+    if (this.mode === "missing-bootstrap-completion") return;
+    const method = this.mode === "failed-bootstrap-completion" ? "Network.loadingFailed" : "Network.loadingFinished";
+    this.event(method, { requestId: this.mode === "wrong-bootstrap-completion-id" ? "other-id" : "bootstrap-id" },
+      this.mode === "wrong-bootstrap-completion-session" ? "foreign" : "worker");
+    if (this.mode === "duplicate-bootstrap-completion") this.event(method, { requestId: "bootstrap-id" }, "worker");
   }
   asset(key, id) {
     this.counts[key] = (this.counts[key] || 0) + 1;
@@ -560,6 +616,42 @@ for (const [mode, reason] of [
     if (["duplicate-fetch", "wrong-fetch-session", "wrong-fetch-network", "missing-fetch-id", "missing-original", "wrong-bootstrap-body"].includes(mode)) {
       expect(connection.commands.some(command => command.method === "Fetch.continueRequest")).toBe(false);
     }
+  });
+}
+for (const fetchFirst of [false, true]) {
+  test(`owned worker bootstrap body is read once and matches creator capture, fetchFirst=${fetchFirst}`, async () => {
+    const connection = new ProbeProtocolMock("valid", { fetchFirst });
+    const facts = await startupProbe(connection, "http://fixture", connection.counts, MOCK_TIMING);
+    expect(facts.bootstrapWorkerBodyMatches && facts.pauseSourceMatchesBootstrap).toBe(true);
+    expect(connection.commands.filter(command => command.method === "Network.getResponseBody" && command.params.requestId === "bootstrap-id")).toEqual([
+      { method: "Network.getResponseBody", params: { requestId: "bootstrap-id" }, session: "worker" },
+    ]);
+    expect(connection.counts["/bootstrap.js"]).toBe(1);
+    expect(connection.commands.filter(command => command.method === "Fetch.getResponseBody")).toHaveLength(1);
+    expect(facts.completeCoverage || facts.collectorProofEstablished).toBe(false);
+  });
+}
+for (const [mode, reason] of [
+  ["wrong-worker-bootstrap-id", "probe-bootstrap-request-invalid"], ["wrong-worker-bootstrap-method", "probe-bootstrap-request-invalid"],
+  ["redirected-worker-bootstrap", "probe-bootstrap-request-invalid"], ["duplicate-worker-bootstrap-request", "probe-bootstrap-request-invalid"],
+  ["missing-bootstrap-worker-body", "probe-protocol-operation-failed"], ["wrong-bootstrap-worker-body", "probe-protocol-operation-failed"],
+  ["late-bootstrap-worker-body", "probe-capability-timeout"], ["missing-bootstrap-response", "probe-bootstrap-completion-invalid"],
+  ["wrong-bootstrap-url", "probe-bootstrap-response-invalid"], ["wrong-bootstrap-status", "probe-bootstrap-response-invalid"],
+  ["wrong-bootstrap-response-id", "probe-bootstrap-completion-invalid"], ["wrong-bootstrap-response-session", "probe-bootstrap-source-invalid"],
+  ["duplicate-bootstrap-response", "probe-event-invalid"], ["duplicate-bootstrap-completion", "probe-bootstrap-completion-invalid"],
+  ["missing-bootstrap-completion", "probe-capability-timeout"], ["failed-bootstrap-completion", "probe-network-failed"],
+  ["wrong-bootstrap-completion-id", "probe-capability-timeout"], ["wrong-bootstrap-completion-session", "probe-bootstrap-source-invalid"],
+  ["bootstrap-completion-before-response", "probe-bootstrap-completion-invalid"], ["wrong-bootstrap-source", "probe-protocol-operation-failed"],
+]) {
+  test(`owned worker bootstrap lifecycle rejects ${mode}`, async () => {
+    const connection = new ProbeProtocolMock(mode, { fetchFirst: true }), facts = newFacts();
+    await expect(startupProbe(connection, "http://fixture", connection.counts, { ...MOCK_TIMING, facts })).rejects.toThrow(reason);
+    if (mode === "late-bootstrap-worker-body") await wait(85);
+    expect(facts.bootstrapWorkerBodyMatches).toBe(false); expect(facts.capability).toBe("unestablished");
+    expect(facts.completeCoverage || facts.collectorProofEstablished).toBe(false);
+    expect(connection.commands.filter(command => command.method === "Fetch.getResponseBody")).toHaveLength(1);
+    expect(connection.commands.filter(command => command.method === "Network.getResponseBody" && command.params.requestId === "bootstrap-id").length).toBeLessThanOrEqual(1);
+    expect(connection.counts["/bootstrap.js"]).toBe(1);
   });
 }
 test("cleanup rejects a surviving group even after leader and listener exit", async () => {
