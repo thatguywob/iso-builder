@@ -346,13 +346,12 @@ function dedicatedWorkerTransport(raw, limits, origin) {
   return transport;
 }
 
-// Page-target-only by default. Worker coverage is an explicit experimental
-// option until the real Chromium fixture passes in CI. Its output is ineligible
-// for the page-only served-tree binder. Same-URL page fetches never cover workers.
-// Cache/SW controls are not undone; dispose this dedicated page/context afterward.
-async function observeFrontendResponses(page, { documentURL, experimentalDedicatedWorkers = false, ...overrides }) {
-  if (typeof experimentalDedicatedWorkers !== "boolean") throw observationError("invalid worker observation mode");
+// Shared byte state only: target census and coverage remain the caller's job.
+// readBody must read the original owned request; it must never refetch by URL.
+function createFrontendResponseState({ documentURL, limits: overrides = {}, readBody, onFailure = () => {}, requestIdentity = "single-session" }) {
   const document = loopbackURL(documentURL);
+  if (!["single-session", "session-scoped"].includes(requestIdentity)) throw observationError("invalid frontend request identity mode");
+  const SOURCE = Symbol("owned source");
   const limits = { ...DEFAULT_LIMITS };
   for (const [name, value] of Object.entries(overrides)) {
     if (!Object.hasOwn(limits, name) || !Number.isSafeInteger(value) || value <= 0 || value > DEFAULT_LIMITS[name]) {
@@ -360,23 +359,22 @@ async function observeFrontendResponses(page, { documentURL, experimentalDedicat
     }
     limits[name] = value;
   }
-  if (page.url() !== "about:blank") throw observationError("frontend observation must start before navigation");
-
-  const rawSession = await page.context().newCDPSession(page);
-  const session = experimentalDedicatedWorkers ? dedicatedWorkerTransport(rawSession, limits, document.origin) : rawSession;
+  if (typeof readBody !== "function" || typeof onFailure !== "function") throw observationError("invalid frontend byte reader");
   const assets = new Map();
   const requests = new Map();
   const ownedResponses = new Map();
-  const publicResponses = [];
   const pendingCache = new Set();
   let failure = null;
-  let documentCount = 0;
   let reservedBytes = 0;
+  let pendingReads = 0;
   let queue = Promise.resolve();
-  let finished = null;
   let disposed = false;
-  const diagnosticFailure = (error, stage = "collector") => experimentalDedicatedWorkers ? session.withIdentityTrace(error, stage) : error;
-  const fail = (error, stage = "collector") => { failure ||= diagnosticFailure(error instanceof Error ? error : new Error(String(error)), stage); };
+  const fail = (error, stage = "collector") => {
+    if (!failure) {
+      failure = error instanceof Error ? error : new Error(String(error));
+      try { onFailure(failure, stage); } catch { /* The original failure stays latched. */ }
+    }
+  };
   const signature = metadata => JSON.stringify([metadata.url, metadata.resourceType, metadata.sizeBytes]);
   const responseMetadata = (address, resourceType, status, headers) => {
     const url = loopbackURL(address);
@@ -396,7 +394,7 @@ async function observeFrontendResponses(page, { documentURL, experimentalDedicat
     }
     return { url: url.href, resourceType, sizeBytes };
   };
-  const cdpRequest = ({ requestId, request, type = "Other", redirectResponse }) => {
+  const cdpRequest = ({ requestId, request, type = "Other", redirectResponse, [SOURCE]: source }) => {
     if (failure || disposed) return;
     try {
       const frontend = !!frontendKind(request.url, type);
@@ -407,8 +405,11 @@ async function observeFrontendResponses(page, { documentURL, experimentalDedicat
       if (redirectResponse && (candidate || requests.get(requestId)?.candidate)) {
         throw observationError("redirected frontend request");
       }
+      if (requestIdentity === "session-scoped" && requests.has(requestId)) {
+        throw observationError("reused active frontend request identity");
+      }
       if (ownedResponses.has(requestId)) throw observationError("reused frontend request identity");
-      requests.set(requestId, { url: request.url, method: request.method, frontend, candidate, redirected: !!redirectResponse });
+      requests.set(requestId, { url: request.url, method: request.method, frontend, candidate, redirected: !!redirectResponse, source });
       if (requests.size > limits.maxResponses) throw observationError("too many pending request identities");
     } catch (error) { fail(error); }
   };
@@ -444,7 +445,7 @@ async function observeFrontendResponses(page, { documentURL, experimentalDedicat
       reservedBytes += metadata.sizeBytes;
       if (reservedBytes > limits.maxTotalBytes) throw observationError("frontend responses exceed total byte limit");
       request.frontend = request.candidate = true;
-      ownedResponses.set(requestId, { ...metadata, complete: false });
+      ownedResponses.set(requestId, { ...metadata, complete: false, source: request.source });
       pendingCache.delete(requestId);
     } catch (error) { fail(error); }
   };
@@ -463,9 +464,10 @@ async function observeFrontendResponses(page, { documentURL, experimentalDedicat
       // Read the exact request ID on the same session whose cache state was
       // checked. Playwright Response.body() can silently refetch a missing body;
       // it must never be used here. Unavailable/evicted bodies fail closed.
+      pendingReads++;
       queue = queue.then(async () => {
         if (failure || disposed) return;
-        const result = await session.send("Network.getResponseBody", { requestId });
+        const result = await readBody(requestId, record.sizeBytes, record.source);
         if (disposed) return;
         if (!result || typeof result.body !== "string" || typeof result.base64Encoded !== "boolean") {
           throw observationError("owned frontend response body is unavailable");
@@ -484,7 +486,7 @@ async function observeFrontendResponses(page, { documentURL, experimentalDedicat
           url: record.url, resourceType: record.resourceType, sha256, sizeBytes: record.sizeBytes,
           responseCount: (previous?.responseCount || 0) + 1,
         });
-      }).catch(error => fail(error, "body-read"));
+      }).catch(error => fail(error, "body-read")).finally(() => { pendingReads--; });
     } catch (error) { fail(error); }
   };
   const cdpFailed = ({ requestId }) => {
@@ -492,6 +494,80 @@ async function observeFrontendResponses(page, { documentURL, experimentalDedicat
     requests.delete(requestId);
     pendingCache.delete(requestId);
   };
+  const handlers = Object.freeze({
+    "Network.requestWillBeSent": cdpRequest, "Network.requestServedFromCache": cacheUsed,
+    "Network.responseReceived": cdpResponse, "Network.loadingFinished": cdpComplete,
+    "Network.loadingFailed": cdpFailed,
+  });
+  return Object.freeze({
+    accept(method, event, sessionId) {
+      if (!Object.hasOwn(handlers, method)) throw observationError("unsupported frontend byte event");
+      if (requestIdentity === "session-scoped") {
+        if (typeof sessionId !== "string" || !sessionId || sessionId.length > 256 ||
+            typeof event?.requestId !== "string" || !event.requestId || event.requestId.length > 256) {
+          fail(observationError("missing owned frontend session/request identity")); return;
+        }
+        const source = Object.freeze({ sessionId, requestId: event.requestId });
+        event = { ...event, requestId: JSON.stringify([sessionId, event.requestId]), [SOURCE]: source };
+      } else if (sessionId !== undefined) {
+        fail(observationError("unexpected frontend source session")); return;
+      }
+      handlers[method](event);
+    },
+    responseMetadata,
+    signature,
+    drain: () => queue,
+    snapshot() {
+      if (disposed) throw observationError("frontend observation already disposed");
+      if (failure) throw failure;
+      if (pendingReads) throw observationError("frontend response bytes are still pending");
+      if (pendingCache.size) throw observationError("unclassified cache signals remain at frontend snapshot");
+      if ([...requests.values()].some(request => request.candidate)) throw observationError("outstanding frontend request at snapshot");
+      return { signatures: [...ownedResponses.values()].map(signature).sort(),
+        assets: [...assets.values()].map(asset => ({ ...asset })).sort((a, b) => a.url.localeCompare(b.url)) };
+    },
+    abort(error = observationError("frontend observation aborted")) { fail(error); },
+    dispose() { disposed = true; },
+  });
+}
+
+// Page-target-only by default. Worker coverage is an explicit experimental
+// option until the real Chromium fixture passes in CI. Its output is ineligible
+// for the page-only served-tree binder. Same-URL page fetches never cover workers.
+// Cache/SW controls are not undone; dispose this dedicated page/context afterward.
+async function observeFrontendResponses(page, { documentURL, experimentalDedicatedWorkers = false, ...overrides }) {
+  if (typeof experimentalDedicatedWorkers !== "boolean") throw observationError("invalid worker observation mode");
+  const document = loopbackURL(documentURL);
+  const limits = { ...DEFAULT_LIMITS };
+  for (const [name, value] of Object.entries(overrides)) {
+    if (!Object.hasOwn(limits, name) || !Number.isSafeInteger(value) || value <= 0 || value > DEFAULT_LIMITS[name]) {
+      throw observationError("invalid or expanded frontend observation limit");
+    }
+    limits[name] = value;
+  }
+  if (page.url() !== "about:blank") throw observationError("frontend observation must start before navigation");
+
+  const rawSession = await page.context().newCDPSession(page);
+  const session = experimentalDedicatedWorkers ? dedicatedWorkerTransport(rawSession, limits, document.origin) : rawSession;
+  const publicResponses = [];
+  let failure = null;
+  let documentCount = 0;
+  let finished = null;
+  let disposed = false;
+  const diagnosticFailure = (error, stage = "collector") => experimentalDedicatedWorkers ? session.withIdentityTrace(error, stage) : error;
+  let core;
+  const fail = (error, stage = "collector") => {
+    failure ||= diagnosticFailure(error instanceof Error ? error : new Error(String(error)), stage);
+    core?.abort(failure);
+  };
+  core = createFrontendResponseState({ documentURL, limits, onFailure: fail,
+    readBody: requestId => session.send("Network.getResponseBody", { requestId }) });
+  const { responseMetadata, signature } = core;
+  const cdpRequest = event => core.accept("Network.requestWillBeSent", event);
+  const cacheUsed = event => core.accept("Network.requestServedFromCache", event);
+  const cdpResponse = event => core.accept("Network.responseReceived", event);
+  const cdpComplete = event => core.accept("Network.loadingFinished", event);
+  const cdpFailed = event => core.accept("Network.loadingFailed", event);
   const workerCreated = worker => experimentalDedicatedWorkers ? session.observeWorker(worker) :
     fail(observationError("worker target is not covered by the owned page CDP session"));
   const failedRequest = request => {
@@ -526,7 +602,7 @@ async function observeFrontendResponses(page, { documentURL, experimentalDedicat
 
   const detach = async () => {
     if (disposed) return;
-    disposed = true;
+    disposed = true; core.dispose();
     page.off("response", observe);
     page.off("requestfailed", failedRequest);
     page.off("worker", workerCreated);
@@ -573,12 +649,12 @@ async function observeFrontendResponses(page, { documentURL, experimentalDedicat
           const drain = async () => {
             let previous;
             do {
-              previous = queue;
+              previous = core.drain();
               await previous;
               await session.send("Network.setCacheDisabled", { cacheDisabled: true })
                 .catch(error => { throw diagnosticFailure(error, "drain"); });
               if (experimentalDedicatedWorkers) await session.flushWorkers();
-            } while (previous !== queue && !failure);
+            } while (previous !== core.drain() && !failure);
           };
           await Promise.race([
             drain(),
@@ -588,18 +664,17 @@ async function observeFrontendResponses(page, { documentURL, experimentalDedicat
           ]);
           if (failure) throw failure;
           if (experimentalDedicatedWorkers) session.assertWorkers();
-          if (pendingCache.size) throw observationError("unclassified cache signals remain at frontend snapshot");
-          if ([...requests.values()].some(request => request.candidate)) throw observationError("outstanding frontend request at snapshot");
-          const owned = [...ownedResponses.values()].map(signature).sort();
+          const snapshot = core.snapshot();
+          const owned = snapshot.signatures;
           const observed = [...publicResponses].sort();
           if (owned.length !== observed.length || owned.some((value, index) => value !== observed[index])) {
             throw observationError("frontend response has no one-to-one owned CDP identity");
           }
-          if (documentCount !== 1 || !assets.has(documentURL)) throw observationError("one complete main-document response is required");
+          if (documentCount !== 1 || !snapshot.assets.some(asset => asset.url === documentURL)) throw observationError("one complete main-document response is required");
           return {
             schemaVersion: 1, kind: "diagnostic-loaded-frontend", qualification: "not-assessed",
             authentication: "not-verified", coverage: experimentalDedicatedWorkers ? "page-and-direct-dedicated-workers-experimental" : "page-target-only", origin: document.origin, documentURL,
-            assets: [...assets.values()].sort((a, b) => a.url.localeCompare(b.url)),
+            assets: snapshot.assets,
           };
         } finally {
           clearTimeout(timer);
@@ -664,4 +739,4 @@ function compareFrontendAssets(observation, expectedAssets) {
   };
 }
 
-module.exports = { observeFrontendResponses, compareFrontendAssets };
+module.exports = { observeFrontendResponses, compareFrontendAssets, createFrontendResponseState };

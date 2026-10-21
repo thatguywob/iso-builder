@@ -6,6 +6,8 @@ const path = require("node:path");
 const os = require("node:os");
 const { spawn } = require("node:child_process");
 const { EventEmitter } = require("node:events");
+const { BodyReservations, METHODS: BODY_METHODS } = require("./owned-flat-body-reservations");
+const { SOCKET_LIMITS } = require("./owned-flat-websocket");
 
 const LIMITS = Object.freeze({ commandMs: 3000, launchMs: 10000, frameBytes: 256 * 1024, pending: 32 });
 function problem(code) { return new Error(`owned-cdp:${code}`); }
@@ -122,9 +124,11 @@ async function readLaunchPin() {
 }
 
 class FlatConnection extends EventEmitter {
-  constructor(socket, { commandMs = LIMITS.commandMs } = {}) {
+  constructor(socket, { commandMs = LIMITS.commandMs, bodyReservations = null } = {}) {
     super();
     if (!Number.isFinite(commandMs) || commandMs < 1 || commandMs > LIMITS.commandMs) throw problem("command-deadline-invalid");
+    if (bodyReservations !== null && !(bodyReservations instanceof BodyReservations)) throw problem("body-profile-invalid");
+    this.bodyReservations = bodyReservations;
     this.socket = socket; this.commandMs = commandMs; this.nextId = 0; this.pending = new Map();
     this.failure = null; this.closed = false;
     socket.addEventListener("message", event => this.receive(event.data));
@@ -133,35 +137,55 @@ class FlatConnection extends EventEmitter {
   }
   fail(code) {
     if (this.failure || this.closed) return;
-    this.failure = problem(code);
+    this.failure = problem(code); this.bodyReservations?.abort();
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(this.failure); }
     this.pending.clear(); this.emit("failure", this.failure);
   }
   receive(data) {
     if (this.failure || this.closed) return;
-    // Native WebSocket already allocated the frame. This acceptance cap is NOT
-    // a preallocation limit; use only controlled tiny fixture responses here.
-    if (typeof data !== "string" || Buffer.byteLength(data) > LIMITS.frameBytes) { this.fail("frame-bound"); return; }
+    // Default native WebSocket has already buffered the message. The explicit
+    // body profile additionally needs the reviewed ws reassembly boundary; this
+    // check alone is only an acceptance cap, never a process memory bound.
+    const bytes = typeof data === "string" ? Buffer.byteLength(data) : Infinity;
+    const cap = this.bodyReservations ? SOCKET_LIMITS.messageBytes : LIMITS.frameBytes;
+    if (bytes > cap) { this.fail("frame-bound"); return; }
     let packet; try { packet = JSON.parse(data); } catch { this.fail("frame-json-invalid"); return; }
     if (!packet || typeof packet !== "object" || Array.isArray(packet)) { this.fail("frame-shape-invalid"); return; }
     if (Object.hasOwn(packet, "id")) {
       const pending = this.pending.get(packet.id);
       if (!pending || packet.sessionId !== pending.sessionId) { this.fail("reply-ownership-mismatch"); return; }
+      if (bytes > LIMITS.frameBytes && !pending.capture) { this.fail("unreserved-large-reply"); return; }
+      if (pending.capture && !packet.error) {
+        try {
+          if (Object.keys(packet).some(key => !["id", "sessionId", "result"].includes(key))) throw problem("body-reply-invalid");
+          this.bodyReservations.validate(pending.capture.token, pending.capture.kind, packet.result);
+        } catch { this.fail("body-reply-invalid"); return; }
+      }
       this.pending.delete(packet.id); clearTimeout(pending.timer);
       if (packet.error) { pending.reject(problem("command-rejected")); this.fail("command-rejected"); }
       else if (!packet.result || typeof packet.result !== "object" || Array.isArray(packet.result)) { pending.reject(problem("reply-shape-invalid")); this.fail("reply-shape-invalid"); }
       else pending.resolve(packet.result);
-    } else if (typeof packet.method === "string" && packet.params && typeof packet.params === "object" && !Array.isArray(packet.params)) {
+    } else if (bytes > LIMITS.frameBytes) this.fail("unreserved-large-event");
+    else if (typeof packet.method === "string" && packet.params && typeof packet.params === "object" && !Array.isArray(packet.params)) {
       this.emit("event", { method: packet.method, params: packet.params, sessionId: packet.sessionId });
     } else this.fail("event-shape-invalid");
   }
   send(method, params = {}, sessionId) {
+    if (this.bodyReservations && Object.values(BODY_METHODS).includes(method)) return Promise.reject(problem("body-reservation-required"));
+    return this.#dispatch(method, params, sessionId);
+  }
+  readBody(token, kind = "network") {
+    if (!this.bodyReservations) return Promise.reject(problem("body-profile-required"));
+    return this.bodyReservations.read(token, kind, binding => this.#dispatch(binding.method,
+      kind === "source" ? { scriptId: binding.requestId } : { requestId: binding.requestId }, binding.sessionId, { token, kind }));
+  }
+  #dispatch(method, params, sessionId, capture = null) {
     if (this.failure || this.closed) return Promise.reject(this.failure || problem("transport-closed"));
     if (this.pending.size >= LIMITS.pending) { this.fail("pending-bound"); return Promise.reject(this.failure); }
     const id = ++this.nextId;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => this.fail("command-timeout"), this.commandMs);
-      this.pending.set(id, { sessionId, resolve, reject, timer });
+      this.pending.set(id, { sessionId, method, capture, resolve, reject, timer });
       try { this.socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) })); }
       catch { this.fail("command-send-failed"); }
     });
