@@ -49,6 +49,20 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
     }
     return aliases.get(key);
   };
+  const targetInventory = value => {
+    const list = value.targetInfos, array = Array.isArray(list);
+    const shape = item => item === undefined ? "missing" : item === null ? "null" : Array.isArray(item) ? "array" : typeof item;
+    const targets = array ? list.slice(0, 8).map(item => Object.freeze({
+      entryShape: shape(item), target: alias(item?.targetId), targetIdPresent: !!item && Object.hasOwn(item, "targetId"), targetIdValid: id(item?.targetId),
+      type: item?.type === undefined ? "missing" : typeof item.type !== "string" ? "invalid" : item.type === "" ? "empty" :
+        ["page", "iframe", "worker", "shared_worker", "service_worker", "browser", "tab"].includes(item.type) ? item.type : "other",
+      urlCategory: item?.url === undefined ? "missing" : item.url === null ? "null" : typeof item.url !== "string" ? "invalid" : urlKind(item.url),
+      context: alias(item?.browserContextId), contextIdPresent: !!item && Object.hasOwn(item, "browserContextId"), contextIdValid: id(item?.browserContextId),
+      contextOwnedMatch: context ? item?.browserContextId === context : null,
+      attached: item?.attached === undefined ? "missing" : item.attached === true ? "true" : item.attached === false ? "false" : "invalid",
+    })) : [];
+    return Object.freeze({ shape: shape(list), count: array ? list.length : null, truncated: array && list.length > 8, targets: Object.freeze(targets) });
+  };
   const note = value => {
     if (trace.length === 64) { trace.shift(); dropped++; }
     trace.push(Object.freeze({ sequence: ++sequence, stage, ...value }));
@@ -68,7 +82,8 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
     return c.send(method, params, session).then(value => {
       note({ kind: "command", command, outcome: "acknowledged", session: owner,
         replyTarget: alias(value?.targetId), replyContext: alias(value?.browserContextId), replyFrame: alias(value?.frameTree?.frame?.id),
-        frameURLKind: urlKind(value?.frameTree?.frame?.url), childFramesPresent: Array.isArray(value?.frameTree?.childFrames) ? value.frameTree.childFrames.length > 0 : null }); return value;
+        frameURLKind: urlKind(value?.frameTree?.frame?.url), childFramesPresent: Array.isArray(value?.frameTree?.childFrames) ? value.frameTree.childFrames.length > 0 : null,
+        ...(method === "Target.getTargets" ? { targetInventory: targetInventory(value) } : {}) }); return value;
     }, error => { note({ kind: "command", command, outcome: "failed", session: owner }); throw error; });
   };
   let resolveLoaded; const loaded = new Promise((resolve,reject) => { resolveLoaded = resolve; rejectLoaded = reject; }); loaded.catch(() => {});

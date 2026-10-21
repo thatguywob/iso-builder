@@ -55,6 +55,7 @@ class Socket extends EventEmitter {
       case "Page.getFrameTree": result = { frameTree: { frame: { id: "frame", url: this.navigated ? ORIGIN + "/" : "about:blank", securityOrigin: ORIGIN } } };
         if (this.navigated && this.mode === "child-frame") result.frameTree.childFrames = [{ frame: { id: "child" } }]; break;
     }
+    if (packet.method === "Target.getTargets" && Object.hasOwn(this,"inventoryReply") && (!this.inventoryFinalOnly || this.created)) result = this.inventoryReply;
     queueMicrotask(() => this.emit("message", { data: JSON.stringify({ id: packet.id, sessionId: packet.sessionId, result }) }));
   }
 }
@@ -197,4 +198,40 @@ test("successful setup trace has every renderer ACK before initial resume", asyn
   for (const command of ["Page.getFrameTree","Page.enable","Runtime.enable","Network.enable","Network.setCacheDisabled","Network.setBypassServiceWorker","Debugger.enable"]) {
     expect(report.trace.find(item=>item.command === command && item.outcome === "acknowledged").sequence).toBeLessThan(resume.sequence);
   }
+});
+
+// Falsification: a nonempty or malformed target inventory remains rejected;
+// diagnostic array/entry limits and fixed categories cannot expose protocol data.
+for (const [name, reply, shape, count] of [
+  ["missing",{},"missing",null],["null",{targetInfos:null},"null",null],
+  ["object",{targetInfos:{}},"object",null],["string",{targetInfos:"SECRET"},"string",null],
+  ["number",{targetInfos:42},"number",null],["boolean",{targetInfos:true},"boolean",null],
+]) test(`initial inventory ${name} is distinguished without weakening isolation`,async()=>{
+  const f=fixture();f.socket.inventoryReply=reply;const error=await rejected(f.open()), report=controllerDiagnosticsFor(error);
+  expect(report).toMatchObject({stage:"initial-targets",reason:"context-not-isolated"});
+  expect(report.trace.at(-1).targetInventory).toEqual({shape,count,truncated:false,targets:[]});
+  expect(JSON.stringify(report)).not.toContain("SECRET");expect(f.socket.calls.some(c=>c.method==='Target.createBrowserContext')).toBe(false);
+});
+test("initial nonempty inventory includes only bounded fixed metadata and opaque aliases",async()=>{
+ const f=fixture();f.socket.inventoryReply={targetInfos:Array.from({length:12},(_,i)=>({targetId:`SECRET_TARGET_${i}`,type:i?'SECRET_TYPE':'browser',url:i?'https://SECRET.invalid/token':'',browserContextId:'SECRET_CONTEXT',attached:i===0,title:'SECRET_TITLE'}))};
+ const error=await rejected(f.open()),report=controllerDiagnosticsFor(error),inventory=report.trace.at(-1).targetInventory;
+ expect(inventory).toMatchObject({shape:'array',count:12,truncated:true});expect(inventory.targets).toHaveLength(8);
+ expect(inventory.targets[0]).toMatchObject({entryShape:'object',targetIdPresent:true,targetIdValid:true,type:'browser',urlCategory:'empty',contextIdPresent:true,contextIdValid:true,contextOwnedMatch:null,attached:'true'});
+ expect(inventory.targets[1]).toMatchObject({type:'other',urlCategory:'other',attached:'false'});
+ expect(Object.isFrozen(inventory)).toBe(true);expect(Object.isFrozen(inventory.targets)).toBe(true);expect(inventory.targets.every(Object.isFrozen)).toBe(true);
+ expect(JSON.stringify(report)).not.toMatch(/SECRET|https:/);expect(f.socket.calls.some(c=>c.method==='Target.createBrowserContext')).toBe(false);
+});
+test("malformed target entries and absent properties retain distinct fixed categories",async()=>{
+ const f=fixture();f.socket.inventoryReply={targetInfos:[null,{},[],{targetId:42,type:false,url:null,browserContextId:7,attached:'SECRET'},{targetId:'',type:'',url:42},{type:'page',url:'about:blank'}]};
+ const inventory=controllerDiagnosticsFor(await rejected(f.open())).trace.at(-1).targetInventory;
+ expect(inventory.targets[0]).toMatchObject({entryShape:'null',type:'missing',urlCategory:'missing',contextIdPresent:false,attached:'missing'});
+ expect(inventory.targets[2].entryShape).toBe('array');expect(inventory.targets[3]).toMatchObject({targetIdValid:false,type:'invalid',urlCategory:'null',contextIdPresent:true,contextIdValid:false,attached:'invalid'});
+ expect(inventory.targets[4]).toMatchObject({targetIdPresent:true,targetIdValid:false,type:'empty',urlCategory:'invalid'});
+ expect(inventory.targets[5]).toMatchObject({type:'page',urlCategory:'about-blank'});expect(JSON.stringify(inventory)).not.toContain('SECRET');
+});
+for(const matching of [true,false])test(`final inventory exposes owned-context match ${matching} without changing census`,async()=>{
+ const f=fixture(),controller=await f.open();f.socket.inventoryFinalOnly=true;f.socket.inventoryReply={targetInfos:[{...f.socket.target(),browserContextId:matching?'context':'SECRET_FOREIGN',attached:true}, {targetId:'SECRET_UNKNOWN',type:'tab',url:'about:blank'}]};
+ const report=controllerDiagnosticsFor(await rejected(controller.finish())),inventory=report.trace.filter(item=>item.targetInventory).at(-1).targetInventory;
+ expect(inventory.targets[0]).toMatchObject({contextOwnedMatch:matching,attached:'true'});expect(inventory.targets[1]).toMatchObject({type:'tab',contextIdPresent:false,contextOwnedMatch:false,attached:'missing'});
+ expect(report.reason).toBe('final-target-census-mismatch');expect(JSON.stringify(report)).not.toContain('SECRET');
 });
