@@ -7,7 +7,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const http = require("node:http");
 const crypto = require("node:crypto");
-const { launchOwnedChromium, deadline, prerequisiteDiagnosticsFor } = require("./owned-flat-cdp");
+const { launchOwnedChromium, deadline, prerequisiteDiagnosticsFor, launchProvenanceFor } = require("./owned-flat-cdp");
 const { openOwnedFrontendController, controllerDiagnosticsFor } = require("./owned-flat-frontend-controller");
 const bad = code => new Error(`owned-layer-fixture:${code}`);
 const sha = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
@@ -112,7 +112,7 @@ test("production fixture leaves cache enabled and has bounded payload/storage in
 });
 test("owned collector real Chromium unchanged production layerworker cold warm shared bytes", async () => {
   test.setTimeout(40000);
-  let owned, controller, frontend, registry, prerequisites = null, failure, observation, errorCode = null, controllerDiagnostics = null;
+  let owned, controller, frontend, registry, prerequisites = null, failure, observation, errorCode = null, controllerDiagnostics = null, provenance = null;
   const measured = [], frontendCounts = {}, registryCounts = { requests:{}, rejected:0, bodyBytes:0, blobBodyBytes:0, uniqueLayers:new Set() };
   try {
     const assets = { "/":HTML };
@@ -120,7 +120,7 @@ test("owned collector real Chromium unchanged production layerworker cold warm s
       const bytes = await fs.readFile(path.join(__dirname,"..","..","app","public",name));
       if (bytes.length > 65536) throw bad("source-bound"); assets["/"+name] = bytes;
     }
-    owned = await launchOwnedChromium({ boundedBodies:true }); prerequisites = owned.prerequisites;
+    owned = await launchOwnedChromium({ boundedBodies:true }); prerequisites = owned.prerequisites; provenance = owned.provenance;
     frontend = http.createServer((request,response) => {
       const bytes = assets[request.url];
       if (request.url === "/favicon.ico") { response.writeHead(204,{"Content-Length":"0"}); response.end(); return; }
@@ -147,6 +147,7 @@ test("owned collector real Chromium unchanged production layerworker cold warm s
     expect(measured.map(phase=>phase.blobBodyBytesThisPhase)).toEqual([228,0,59]);
   } catch (error) {
     prerequisites ||= prerequisiteDiagnosticsFor(error);
+    provenance ||= launchProvenanceFor(error);
     controllerDiagnostics = controllerDiagnosticsFor(error);
     errorCode = /^owned-(?:cdp|controller|frontend|ws|body|layer-fixture):[a-z-]+$/.test(error?.message || "") ? error.message : "owned-layer-fixture:assertion-failed";
     failure = bad("experiment-failed");
@@ -154,7 +155,7 @@ test("owned collector real Chromium unchanged production layerworker cold warm s
   finally {
     try { if (controller) await controller.dispose(); else if (owned) await owned.close(); } catch { failure ||= bad("owned-cleanup-failed"); }
     try { await closeServer(registry); await closeServer(frontend); } catch { failure ||= bad("server-cleanup-failed"); }
-    console.log(`OWNED_LAYER_CACHE_EXPERIMENT ${JSON.stringify({success:!failure,measured,prerequisites,controllerDiagnostics,
+    console.log(`OWNED_LAYER_CACHE_EXPERIMENT ${JSON.stringify({success:!failure,measured,prerequisites,provenance,controllerDiagnostics,
       browserVersion:owned?.pin.browserVersion || null,terminalCleanupVerified:observation?.terminalCleanupVerified === true,
       completeCoverage:false,collectorProofEstablished:false,errorCode:errorCode || failure?.message || null})}`);
   }

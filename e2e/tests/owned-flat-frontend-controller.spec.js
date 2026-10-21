@@ -235,3 +235,39 @@ for(const matching of [true,false])test(`final inventory exposes owned-context m
  expect(inventory.targets[0]).toMatchObject({contextOwnedMatch:matching,attached:'true'});expect(inventory.targets[1]).toMatchObject({type:'tab',contextIdPresent:false,contextOwnedMatch:false,attached:'missing'});
  expect(report.reason).toBe('final-target-census-mismatch');expect(JSON.stringify(report)).not.toContain('SECRET');
 });
+
+
+// Falsification: recognizing a public component label must never admit it;
+// unknown origins, credentials, encoded/suffix hosts and raw URL data stay hidden.
+const componentExamples = [
+ ["network-speech","fignfifoniblkonapihmkfakmlgkbkcf","service_worker.js"],
+ ["glic","admccjkmockfdflocgggjfgdacdodkdf","background.js"],
+ ["hangouts","nkeimhogjdpnpccoofpliimaahmaaome","thunk.js"],
+];
+async function observedTargetURL(url){const f=fixture();f.socket.inventoryReply={targetInfos:[{targetId:"SECRET_TARGET",type:"service_worker",url,browserContextId:"SECRET_CONTEXT",attached:false}]};
+ const error=await rejected(f.open()),report=controllerDiagnosticsFor(error);expect(report.reason).toBe("context-not-isolated");
+ expect(f.socket.calls.some(c=>c.method === "Target.createBrowserContext")).toBe(false);return report.trace.at(-1).targetInventory.targets[0].urlFacts;}
+for(const [label,host,worker] of componentExamples)test(`public ${label} component is diagnosed while startup remains rejected`,async()=>{
+ const facts=await observedTargetURL(`chrome-extension://${host}/${worker}`);
+ expect(facts).toEqual({scheme:"chrome-extension",knownComponent:label,exactKnownWorkerPath:true,credentialsPresent:false,queryPresent:false,fragmentPresent:false});expect(Object.isFrozen(facts)).toBe(true);
+});
+for(const [name,url,scheme,label,worker] of [
+ ["unknown","chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/SECRET","chrome-extension","unknown-extension",null],
+ ["wrong-path","chrome-extension://fignfifoniblkonapihmkfakmlgkbkcf/SECRET","chrome-extension","network-speech",false],
+ ["query","chrome-extension://fignfifoniblkonapihmkfakmlgkbkcf/service_worker.js?SECRET","chrome-extension","network-speech",false],
+ ["fragment","chrome-extension://fignfifoniblkonapihmkfakmlgkbkcf/service_worker.js#SECRET","chrome-extension","network-speech",false],
+ ["credentials","chrome-extension://SECRET@fignfifoniblkonapihmkfakmlgkbkcf/service_worker.js","chrome-extension","unknown-extension",null],
+ ["suffix","chrome-extension://fignfifoniblkonapihmkfakmlgkbkcf.SECRET/service_worker.js","chrome-extension","unknown-extension",null],
+ ["encoded-host","chrome-extension://%66ignfifoniblkonapihmkfakmlgkbkcf/service_worker.js","chrome-extension","unknown-extension",null],
+ ["http","https://SECRET.invalid/","https","not-extension",null],
+ ["blob","blob:https://SECRET.invalid/id","blob","not-extension",null],
+ ["data","data:text/plain,SECRET","data","not-extension",null],
+ ["unknown-scheme","SECRET:SECRET","other","not-extension",null],
+ ["malformed","SECRET invalid","invalid","unavailable",null],
+ ["oversize","SECRET".repeat(1000),"invalid","unavailable",null],
+ ["missing",undefined,"missing","unavailable",null],
+ ["nonstring",{SECRET:true},"invalid","unavailable",null],
+])test(`target URL ${name} preserves diagnostic uncertainty and redaction`,async()=>{
+ const facts=await observedTargetURL(url);expect(facts).toMatchObject({scheme,knownComponent:label,exactKnownWorkerPath:worker});
+ expect(JSON.stringify(facts)).not.toMatch(/SECRET|invalid\/|fignfifoniblkonapihmkfakmlgkbkcf/);
+});

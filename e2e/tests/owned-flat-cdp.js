@@ -4,6 +4,7 @@ const fs = require("node:fs/promises");
 const constants = require("node:fs").constants;
 const path = require("node:path");
 const os = require("node:os");
+const crypto = require("node:crypto");
 const { spawn } = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const { BodyReservations, METHODS: BODY_METHODS } = require("./owned-flat-body-reservations");
@@ -119,9 +120,87 @@ async function readLaunchPin() {
   const filename = chromium.executablePath();
   const realpath = await fs.realpath(filename); const stat = await fs.stat(realpath);
   if (!stat.isFile() || !(stat.mode & 0o111)) throw problem("chromium-executable-invalid");
-  return { playwrightVersion: version, browserVersion: entry.browserVersion,
+  return { playwrightVersion: version, browserVersion: entry.browserVersion, browserRevision: entry.revision, distribution: entry.title,
     executable: { filename, realpath, dev: stat.dev, ino: stat.ino, size: stat.size } };
 }
+
+// These measurements identify this local selection, not a vendor-attested hash.
+// The timer cancels streaming/hash work; open/stat/close are Node filesystem
+// operations and can outlive it. Never report observed after a late timeout.
+const PROVENANCE_LIMITS = Object.freeze({ executableBytes: 512 * 1024 * 1024, chunkBytes: 1024 * 1024, hashMs: 15000 });
+const sameFile = (a, b) => ["dev", "ino", "size", "mtimeMs", "ctimeMs"].every(key => a[key] === b[key]);
+const emptyExecutable = status => Object.freeze({ status, sha256: null, sizeBytes: null, format: "unknown" });
+async function executableObservation(executable, io = {}) {
+  const timeoutMs = io.timeoutMs ?? PROVENANCE_LIMITS.hashMs;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > PROVENANCE_LIMITS.hashMs) return emptyExecutable("invalid");
+  if (!executable?.realpath) return emptyExecutable("unavailable");
+  let file, stream, timer, timedOut = false, result = emptyExecutable("unavailable");
+  const abort = new AbortController();
+  try {
+    file = await (io.open || fs.open)(executable.realpath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const before = await file.stat();
+    if (!before.isFile() || !Number.isSafeInteger(before.size) || before.size < 1) return emptyExecutable("invalid");
+    if (before.size > PROVENANCE_LIMITS.executableBytes) return emptyExecutable("oversize");
+    if (["dev", "ino", "size"].some(key => before[key] !== executable[key])) return emptyExecutable("changed");
+    timer = setTimeout(() => { timedOut = true; abort.abort(); }, timeoutMs);
+    stream = (io.stream || ((handle, options) => handle.createReadStream(options)))(file,
+      { autoClose: false, highWaterMark: PROVENANCE_LIMITS.chunkBytes, signal: abort.signal });
+    const hash = crypto.createHash("sha256"); let size = 0, prefix = Buffer.alloc(0);
+    for await (const bytes of stream) {
+      if (!Buffer.isBuffer(bytes) || bytes.length > PROVENANCE_LIMITS.chunkBytes || size + bytes.length > before.size) {
+        return emptyExecutable("invalid");
+      }
+      if (prefix.length < 4) prefix = Buffer.concat([prefix, bytes.subarray(0, 4 - prefix.length)]);
+      size += bytes.length; hash.update(bytes);
+    }
+    if (stream.destroyed && size !== before.size) return timedOut ? emptyExecutable("timeout") : result;
+    const after = await file.stat(), current = await (io.lstat || fs.lstat)(executable.realpath);
+    if (timedOut || abort.signal.aborted) return emptyExecutable("timeout");
+    if (!sameFile(before, after) || !sameFile(before, current) || !current.isFile() || size !== before.size) return emptyExecutable("changed");
+    result = Object.freeze({ status: "observed", sha256: `sha256:${hash.digest("hex")}`, sizeBytes: size,
+      format: prefix.equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])) ? "elf-magic" : prefix.subarray(0, 2).equals(Buffer.from("#!")) ? "shebang" : "other" });
+  } catch { result = emptyExecutable(timedOut ? "timeout" : "unavailable"); }
+  finally {
+    clearTimeout(timer); stream?.destroy();
+    try { await file?.close(); } catch { result = emptyExecutable("unavailable"); }
+  }
+  return result;
+}
+async function freshProfileObservation(profile, io = {}) {
+  const unavailable = Object.freeze({ status: "unavailable", empty: null, ownedByEffectiveUid: null, mode: null, stableIdentity: null });
+  let directory, result = unavailable;
+  try {
+    const before = await (io.lstat || fs.lstat)(profile);
+    if (!before.isDirectory() || before.isSymbolicLink()) return Object.freeze({ ...unavailable, status: "invalid" });
+    directory = await (io.opendir || fs.opendir)(profile, { bufferSize: 1 });
+    const first = await directory.read(), after = await (io.lstat || fs.lstat)(profile);
+    const stable = before.dev === after.dev && before.ino === after.ino && after.isDirectory() && !after.isSymbolicLink();
+    result = Object.freeze({ status: "observed", empty: first === null,
+      ownedByEffectiveUid: before.uid === (io.uid || (() => process.geteuid()))(), mode: before.mode & 0o777,
+      stableIdentity: stable });
+  } catch { result = unavailable; }
+  finally { try { await directory?.close(); } catch { result = unavailable; } }
+  return result;
+}
+function launchPolicyObservation(args) {
+  const has = flag => args.some(arg => arg === flag || arg.startsWith(flag + "="));
+  return Object.freeze({ componentBackgroundDisabled: has("--disable-component-extensions-with-background-pages"),
+    extensionsDisabled: has("--disable-extensions"), componentUpdatesDisabled: has("--disable-component-update"),
+    testType: has("--test-type"), loadExtension: has("--load-extension"), hostPolicyInspection: "not-performed" });
+}
+function launchProvenance(pin, executable, profile, product) {
+  return Object.freeze({ profile: "owned-launch-provenance-diagnostic-v1",
+    playwrightVersion: pin?.playwrightVersion === "1.64.1" ? "1.64.1" : null,
+    browserRevision: pin?.browserRevision === "1248" ? "1248" : null,
+    declaredDistribution: pin?.distribution === "Chrome for Testing" ? "playwright-chromium-cft" : null,
+    declaredBrowserVersion: pin?.browserVersion === "156.0.8078.4" ? "156.0.8078.4" : null,
+    observedProduct: ["Chrome/156.0.8078.4", "HeadlessChrome/156.0.8078.4"].includes(product) ? product : null,
+    executable: executable || emptyExecutable("unavailable"), freshProfile: profile || Object.freeze({ status: "unavailable", empty: null,
+      ownedByEffectiveUid: null, mode: null, stableIdentity: null }), launchPolicy: launchPolicyObservation(launchArguments("")) });
+}
+const provenanceErrors = new WeakMap();
+function launchProvenanceFor(error) { return provenanceErrors.get(error) || null; }
+function attachLaunchProvenance(error, provenance) { provenanceErrors.set(error, provenance); return error; }
 
 class FlatConnection extends EventEmitter {
   constructor(socket, { commandMs = LIMITS.commandMs, bodyReservations = null } = {}) {
@@ -318,6 +397,7 @@ async function closeOwnedChannels(connection, socket, boundedBodies = false) {
 }
 async function launchOwnedChromium({ boundedBodies = false } = {}) {
   let pin, profile, child, identity, connection, socket, endpoint, exited, stderr = "", stderrTruncated = false, prerequisites, stopping = false, cleanupPromise;
+  let executableFacts, profileFacts, observedProduct;
   const cleanup = () => cleanupPromise ||= (async () => {
     stopping = true;
     let channelFailure;
@@ -340,7 +420,9 @@ async function launchOwnedChromium({ boundedBodies = false } = {}) {
     if (process.platform !== "linux" || (!boundedBodies && typeof globalThis.WebSocket !== "function")) throw problem("unsupported-host");
     pin = await readLaunchPin();
     prerequisites = await collectLaunchPrerequisites(pin.executable);
+    executableFacts = await executableObservation(pin.executable);
     profile = await fs.mkdtemp(path.join(os.tmpdir(), "iso-owned-cdp-"));
+    profileFacts = await freshProfileObservation(profile);
     const env = Object.fromEntries(["PATH", "HOME", "LANG", "LC_ALL", "TZ", "TMPDIR", "XDG_RUNTIME_DIR"]
       .filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
     child = spawn(pin.executable.realpath, launchArguments(profile), { env, detached: true, stdio: ["ignore", "ignore", "pipe"] });
@@ -391,11 +473,12 @@ async function launchOwnedChromium({ boundedBodies = false } = {}) {
     if (version.product !== `Chrome/${pin.browserVersion}` && version.product !== `HeadlessChrome/${pin.browserVersion}`) {
       throw problem("observed-browser-pin-mismatch");
     }
-    return { connection, pin, prerequisites, verify: async () => { try { await verify(); } catch (error) { throw safeError(error, "endpoint-recheck-failed"); } }, close: cleanup };
+    observedProduct = version.product;
+    return { connection, pin, prerequisites, provenance: launchProvenance(pin, executableFacts, profileFacts, observedProduct), verify: async () => { try { await verify(); } catch (error) { throw safeError(error, "endpoint-recheck-failed"); } }, close: cleanup };
   } catch (error) {
     prerequisites ||= await collectLaunchPrerequisites(pin?.executable);
-    try { await cleanup(); } catch (cleanupError) { throw attachPrerequisites(cleanupError, prerequisites, stderr, stderrTruncated); }
-    throw attachPrerequisites(error, prerequisites, stderr, stderrTruncated);
+    try { await cleanup(); } catch (cleanupError) { throw attachLaunchProvenance(attachPrerequisites(cleanupError, prerequisites, stderr, stderrTruncated), launchProvenance(pin, executableFacts, profileFacts, observedProduct)); }
+    throw attachLaunchProvenance(attachPrerequisites(error, prerequisites, stderr, stderrTruncated), launchProvenance(pin, executableFacts, profileFacts, observedProduct));
   }
 }
 function safeError(error, fallback) {
@@ -403,4 +486,5 @@ function safeError(error, fallback) {
 }
 module.exports = { FlatConnection, launchOwnedChromium, parseActivePort, processIdentity, inspectEndpointRecords,
   launchArguments, readLaunchPin, deadline, problem, LIMITS, cleanupOwnedProcess, readSmall, stderrCategory, numericObservation, helperObservation,
-  collectLaunchPrerequisites, prerequisiteDiagnosticsFor, attachPrerequisites, closeOwnedChannels };
+  collectLaunchPrerequisites, prerequisiteDiagnosticsFor, attachPrerequisites, closeOwnedChannels, executableObservation, freshProfileObservation,
+  launchPolicyObservation, launchProvenance, launchProvenanceFor, attachLaunchProvenance, PROVENANCE_LIMITS };

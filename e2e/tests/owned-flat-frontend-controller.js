@@ -16,6 +16,29 @@ const EVENTS = new Set(["Target.targetCreated", "Target.targetInfoChanged", "Tar
 function controllerDiagnosticsFor(error) { return diagnostics.get(error) || null; }
 const id = value => typeof value === "string" && value.length > 0 && value.length <= 256;
 const urlKind = value => value === "" ? "empty" : value === "about:blank" ? "about-blank" : typeof value === "string" ? "other" : "missing";
+// Public Chromium 156.0.8078.4 manifest-key IDs; diagnostic labels only.
+// Exact source commit f842f52ef39fd97b449eb27cff414bf05a98ddce.
+const COMPONENTS = Object.freeze({
+  fignfifoniblkonapihmkfakmlgkbkcf: Object.freeze({ label: "network-speech", worker: "/service_worker.js" }),
+  admccjkmockfdflocgggjfgdacdodkdf: Object.freeze({ label: "glic", worker: "/background.js" }),
+  nkeimhogjdpnpccoofpliimaahmaaome: Object.freeze({ label: "hangouts", worker: "/thunk.js" }),
+});
+function targetURLObservation(value) {
+  const unknown = { scheme: "invalid", knownComponent: "unavailable", exactKnownWorkerPath: null,
+    credentialsPresent: null, queryPresent: null, fragmentPresent: null };
+  if (typeof value !== "string" || !value || value.length > 4096) return Object.freeze({ ...unknown, scheme: value === undefined ? "missing" : "invalid" });
+  try {
+    const url = new URL(value), protocol = url.protocol.slice(0, -1);
+    const scheme = ["chrome-extension", "http", "https", "about", "blob", "data", "file", "chrome"].includes(protocol) ? protocol : "other";
+    const credentialsPresent = !!(url.username || url.password), queryPresent = !!url.search, fragmentPresent = !!url.hash;
+    const canonicalExtension = scheme === "chrome-extension" && !credentialsPresent && !url.port && url.href === value && /^[a-p]{32}$/.test(url.hostname);
+    const component = canonicalExtension && Object.hasOwn(COMPONENTS, url.hostname) ? COMPONENTS[url.hostname] : null;
+    return Object.freeze({ scheme, knownComponent: component?.label || (scheme === "chrome-extension" ? "unknown-extension" : "not-extension"),
+      exactKnownWorkerPath: component ? url.pathname === component.worker && !queryPresent && !fragmentPresent : null,
+      credentialsPresent, queryPresent, fragmentPresent });
+  } catch { return Object.freeze(unknown); }
+}
+
 const NETWORK = new Set(["Network.requestWillBeSent", "Network.requestServedFromCache", "Network.responseReceived", "Network.loadingFinished", "Network.loadingFailed"]);
 async function openOwnedFrontendController(owned, { documentURL, workerURLs, expectedPageScripts = [], firstResumeDelayMs = 0, timeoutMs = 10000 } = {}) {
   let c, origin;
@@ -53,7 +76,7 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
     const list = value.targetInfos, array = Array.isArray(list);
     const shape = item => item === undefined ? "missing" : item === null ? "null" : Array.isArray(item) ? "array" : typeof item;
     const targets = array ? list.slice(0, 8).map(item => Object.freeze({
-      entryShape: shape(item), target: alias(item?.targetId), targetIdPresent: !!item && Object.hasOwn(item, "targetId"), targetIdValid: id(item?.targetId),
+      urlFacts: targetURLObservation(item?.url), entryShape: shape(item), target: alias(item?.targetId), targetIdPresent: !!item && Object.hasOwn(item, "targetId"), targetIdValid: id(item?.targetId),
       type: item?.type === undefined ? "missing" : typeof item.type !== "string" ? "invalid" : item.type === "" ? "empty" :
         ["page", "iframe", "worker", "shared_worker", "service_worker", "browser", "tab"].includes(item.type) ? item.type : "other",
       urlCategory: item?.url === undefined ? "missing" : item.url === null ? "null" : typeof item.url !== "string" ? "invalid" : urlKind(item.url),

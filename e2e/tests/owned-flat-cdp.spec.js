@@ -11,7 +11,8 @@ const path = require("node:path");
 const http = require("node:http");
 const { FlatConnection, launchOwnedChromium, parseActivePort, processIdentity, inspectEndpointRecords,
   launchArguments, cleanupOwnedProcess, readSmall, deadline, problem, LIMITS, stderrCategory, numericObservation, helperObservation,
-  collectLaunchPrerequisites, prerequisiteDiagnosticsFor, attachPrerequisites } = require("./owned-flat-cdp");
+  collectLaunchPrerequisites, prerequisiteDiagnosticsFor, attachPrerequisites, executableObservation, freshProfileObservation,
+  launchPolicyObservation, launchProvenance, launchProvenanceFor, attachLaunchProvenance, PROVENANCE_LIMITS } = require("./owned-flat-cdp");
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const PORT = "42123\n/devtools/browser/12345678-abcd-abcd-abcd-123456789abc";
@@ -850,4 +851,111 @@ test("owned flattened CDP real Chromium startup capability probe", async () => {
     console.log(`OWNED_FLAT_CDP_PROBE ${JSON.stringify({ ...facts, prerequisites, browserVersion: owned?.pin.browserVersion || null, playwrightVersion: owned?.pin.playwrightVersion || null })}`);
     if (failure) throw problem(facts.errorCode.slice(10));
   }
+});
+
+
+// Falsification: provenance cannot turn an absent/replaced executable, wrapper,
+// nonempty profile or secret-bearing failure into an observed clean launch.
+const hashBytes = bytes => `sha256:${require("node:crypto").createHash("sha256").update(bytes).digest("hex")}`;
+async function executableFixture(run) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "owned-provenance-"));
+  try {
+    const realpath = path.join(root, "binary"), bytes = Buffer.from([0x7f,0x45,0x4c,0x46,0,1,2,3]);
+    await fs.writeFile(realpath, bytes); const stat = await fs.stat(realpath);
+    await run({root,bytes,executable:{realpath,dev:stat.dev,ino:stat.ino,size:stat.size}});
+  } finally { await fs.rm(root,{recursive:true,force:true}); }
+}
+test("executable observation streams exact selected file and only emits fixed metadata", async()=>executableFixture(async({bytes,executable})=>{
+ const report=await executableObservation(executable);
+ expect(report).toEqual({status:"observed",sha256:hashBytes(bytes),sizeBytes:8,format:"elf-magic"});
+ expect(Object.isFrozen(report)).toBe(true); expect(JSON.stringify(report)).not.toContain(executable.realpath);
+}));
+for(const [name,bytes,format] of [["wrapper",Buffer.from("#!/secret/token\n"),"shebang"],["other",Buffer.from("SECRET_BODY"),"other"]])
+ test(`executable format ${name} is measured without exposing its contents`,async()=>executableFixture(async({executable})=>{
+  await fs.writeFile(executable.realpath,bytes); executable.size=bytes.length;
+  const report=await executableObservation(executable); expect(report).toMatchObject({status:"observed",format,sizeBytes:bytes.length});
+  expect(JSON.stringify(report)).not.toMatch(/SECRET|secret|token/);
+ }));
+test("executable observation rejects missing symlink directory and wrong selected identity",async()=>executableFixture(async({root,executable})=>{
+ const symlink=path.join(root,"link");await fs.symlink(executable.realpath,symlink);
+ for(const changed of [{realpath:symlink},{realpath:root},{realpath:root+"/absent"},{ino:executable.ino+1}]) {
+  const report=await executableObservation({...executable,...changed});expect(report.status).not.toBe("observed");expect(report.sha256).toBeNull();
+ }
+}));
+test("executable observation refuses FIFO metadata before any stream read",async()=>{
+ let streamed=false,closed=false,flags;
+ const report=await executableObservation({realpath:"SECRET",dev:1,ino:2,size:0},{open:async(name,f)=>{flags=f;return {stat:async()=>({isFile:()=>false}),close:async()=>{closed=true;}};},stream:()=>{streamed=true;}});
+ expect(report.status).toBe("invalid");expect(streamed).toBe(false);expect(closed).toBe(true);
+ const c=require("node:fs").constants; expect(flags & c.O_NONBLOCK).toBe(c.O_NONBLOCK);expect(flags & c.O_NOFOLLOW).toBe(c.O_NOFOLLOW);
+});
+test("executable size bound never starts a stream",async()=>{
+ let streamed=false,closed=false;
+ const report=await executableObservation({realpath:"SECRET"},{open:async()=>({stat:async()=>({isFile:()=>true,size:PROVENANCE_LIMITS.executableBytes+1}),close:async()=>{closed=true;}}),stream:()=>{streamed=true;}});
+ expect(report.status).toBe("oversize");expect(streamed).toBe(false);expect(closed).toBe(true);
+});
+test("executable timeout cancels stream and closes its descriptor",async()=>executableFixture(async({executable})=>{
+ let stream;
+ const {Readable,addAbortSignal}=require("node:stream");
+ const report=await executableObservation(executable,{timeoutMs:5,stream:(file,options)=>{stream=addAbortSignal(options.signal,new Readable({read(){}}));return stream;}});
+ expect(report.status).toBe("timeout");expect(report.sha256).toBeNull();expect(stream.destroyed).toBe(true);
+}));
+test("executable observation detects path replacement after reading the owned file",async()=>executableFixture(async({executable})=>{
+ const report=await executableObservation(executable,{lstat:async name=>{const s=await fs.lstat(name);return {...s,isFile:()=>true,ino:s.ino+1};}});
+ expect(report.status).toBe("changed");expect(report.sha256).toBeNull();
+}));
+test("executable observation detects mutation of the open file",async()=>executableFixture(async({bytes,executable})=>{
+ const {Readable}=require("node:stream");
+ const report=await executableObservation(executable,{stream:()=>Readable.from((async function*(){yield bytes;await fs.appendFile(executable.realpath,"x");})())});
+ expect(report.status).toBe("changed");expect(report.sha256).toBeNull();
+}));
+test("executable error text and unsupported deadline never escape",async()=>{
+ const report=await executableObservation({realpath:"SECRET"},{open:async()=>{throw Error("SECRET https://token.invalid");}});
+ expect(report.status).toBe("unavailable");expect(JSON.stringify(report)).not.toContain("SECRET");
+ expect((await executableObservation({}, {timeoutMs:NaN})).status).toBe("invalid");
+});
+test("profile observation distinguishes empty nonempty and symlink without entry names",async()=>executableFixture(async({root})=>{
+ const profile=path.join(root,"profile");await fs.mkdir(profile,{mode:0o700});
+ const empty=await freshProfileObservation(profile);expect(empty).toMatchObject({status:"observed",empty:true,stableIdentity:true,ownedByEffectiveUid:true,mode:0o700});
+ await fs.writeFile(path.join(profile,"SECRET"),"SECRET");const nonempty=await freshProfileObservation(profile);
+ expect(nonempty.empty).toBe(false);expect(JSON.stringify(nonempty)).not.toContain("SECRET");
+ await fs.symlink(profile,path.join(root,"link"));expect((await freshProfileObservation(path.join(root,"link"))).status).toBe("invalid");
+ expect(Object.isFrozen(empty)).toBe(true);
+}));
+test("profile unavailable and replaced observations stay distinct",async()=>{
+ expect((await freshProfileObservation("SECRET",{lstat:async()=>{throw Error("SECRET");}})).status).toBe("unavailable");
+ let n=0,closed=false;const report=await freshProfileObservation("SECRET",{lstat:async()=>({isDirectory:()=>true,isSymbolicLink:()=>false,dev:1,ino:++n,uid:7,mode:0o700}),uid:()=>7,opendir:async()=>({read:async()=>null,close:async()=>{closed=true;}})});
+ expect(report).toMatchObject({status:"observed",stableIdentity:false});expect(closed).toBe(true);
+});
+test("launch policy facts describe unchanged arguments and no policy inspection",()=>{
+ expect(launchPolicyObservation(launchArguments("SECRET"))).toEqual({componentBackgroundDisabled:false,extensionsDisabled:false,componentUpdatesDisabled:false,testType:false,loadExtension:false,hostPolicyInspection:"not-performed"});
+});
+test("frozen sanitized provenance survives failure without arbitrary product or pin fields",()=>{
+ const pin={playwrightVersion:"SECRET",browserVersion:"SECRET",executable:{realpath:"SECRET"}};
+ const report=launchProvenance(pin,null,null,"SECRET_PRODUCT"),error=problem("launch-failed");attachLaunchProvenance(error,report);
+ expect(launchProvenanceFor(error)).toBe(report);expect(Object.isFrozen(report)).toBe(true);
+ expect(JSON.stringify(report)).not.toContain("SECRET");expect(launchProvenanceFor(Error("SECRET"))).toBeNull();
+});
+
+test("declared pin provenance stays distinct from observed running product",()=>{
+ const pin={playwrightVersion:"1.64.1",browserVersion:"156.0.8078.4",browserRevision:"1248",distribution:"Chrome for Testing"};
+ expect(launchProvenance(pin,null,null,"Chrome/156.0.8078.4")).toMatchObject({playwrightVersion:"1.64.1",browserRevision:"1248",declaredDistribution:"playwright-chromium-cft",observedProduct:"Chrome/156.0.8078.4"});
+ expect(launchProvenance({},null,null,"OTHER")).toMatchObject({browserRevision:null,declaredDistribution:null,observedProduct:null});
+});
+
+test("executable EOF followed by delayed metadata cannot report observed after timeout",async()=>executableFixture(async({executable})=>{
+ const report=await executableObservation(executable,{timeoutMs:5,lstat:async name=>{await wait(20);return fs.lstat(name);}});
+ expect(report).toEqual({status:"timeout",sha256:null,sizeBytes:null,format:"unknown"});
+}));
+test("executable descriptor close failure invalidates an otherwise observed result",async()=>executableFixture(async({executable})=>{
+ let closed=false;
+ const report=await executableObservation(executable,{open:async(name,flags)=>{const handle=await fs.open(name,flags);return {stat:()=>handle.stat(),createReadStream:options=>handle.createReadStream(options),close:async()=>{await handle.close();closed=true;throw Error("SECRET_CLOSE");}};}});
+ expect(closed).toBe(true);expect(report.status).toBe("unavailable");expect(report.sha256).toBeNull();expect(JSON.stringify(report)).not.toContain("SECRET");
+}));
+
+test("profile close failure downgrades otherwise observed empty directory",async()=>{
+ let closed=false;
+ const report=await freshProfileObservation("SECRET",{lstat:async()=>({isDirectory:()=>true,isSymbolicLink:()=>false,dev:1,ino:2,uid:7,mode:0o700}),uid:()=>7,
+  opendir:async()=>({read:async()=>null,close:async()=>{closed=true;throw Error("SECRET_CLOSE");}})});
+ expect(closed).toBe(true);expect(report).toEqual({status:"unavailable",empty:null,ownedByEffectiveUid:null,mode:null,stableIdentity:null});
+ expect(JSON.stringify(report)).not.toContain("SECRET");expect(Object.isFrozen(report)).toBe(true);
 });
