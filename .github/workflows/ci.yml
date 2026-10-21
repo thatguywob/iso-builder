@@ -63,6 +63,10 @@ on:
         description: "Publish each built ISO to R2 instead of discarding it (boot testing)"
         type: boolean
         default: false
+      retain_candidate:
+        description: "Retain ONE Yellowfin GNOME candidate (max 10 GiB) in existing R2; NO automatic expiry or cleanup"
+        type: boolean
+        default: false
       benchmark:
         description: "Run each @full build three times and attach median/range evidence"
         type: boolean
@@ -110,7 +114,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-      - run: python -m pip install pytest
+      - run: python -m pip install pytest PyYAML
       - run: python -m pytest -q tests
 
   native-linux:
@@ -407,7 +411,7 @@ jobs:
   # pulls to iterate on one edition is indefensible — the first sweep did
   # exactly that and spent eight cells learning one thing.
   full-plan:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_full == 'true'
+    if: github.event_name == 'workflow_dispatch' && (github.event.inputs.run_full == 'true' || github.event.inputs.retain_candidate == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -418,9 +422,17 @@ jobs:
       - id: pick
         env:
           ONLY: ${{ github.event.inputs.only }}
+          RETAIN_CANDIDATE: ${{ github.event.inputs.retain_candidate }}
+          RUN_FULL: ${{ github.event.inputs.run_full }}
+          BENCHMARK: ${{ github.event.inputs.benchmark }}
+          KEEP_ISO: ${{ github.event.inputs.keep_iso }}
         run: |
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json, os
+          if os.environ.get("RETAIN_CANDIDATE") == "true":
+              expected = {"ONLY": "yellowfin-gnome", "RUN_FULL": "true", "BENCHMARK": "false", "KEEP_ISO": "false"}
+              if any(os.environ.get(k) != v for k, v in expected.items()):
+                  raise SystemExit("candidate retention requires run_full=true, only=yellowfin-gnome, benchmark=false, keep_iso=false")
           eds = json.load(open("e2e/editions.json"))
           only = [s.strip() for s in os.environ.get("ONLY", "").split(",") if s.strip()]
           if only:
@@ -475,7 +487,8 @@ jobs:
     # slow-but-moving ones, so the extra headroom costs nothing on real
     # failures. 105 = 75 (build test) + 25 (LUKS verify step's own cap)
     # + install/checkout slack, so neither inner cap can be pre-empted.
-    timeout-minutes: 105
+    # Retention adds a 5-minute preflight and 20-minute I/O cap, not browser/guest time.
+    timeout-minutes: ${{ github.event.inputs.retain_candidate == 'true' && 130 || 105 }}
     strategy:
       # A coverage sweep is worthless if the first red cell cancels the
       # rest — the whole point is learning which bases are broken.
@@ -489,6 +502,31 @@ jobs:
         edition: ${{ fromJSON(needs.full-plan.outputs.editions) }}
     steps:
       - uses: actions/checkout@v7
+
+      - name: preflight opt-in candidate retention
+        if: github.event.inputs.retain_candidate == 'true'
+        timeout-minutes: 5
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          # Test presence only; never print credentials or contact storage here.
+          for name in R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_ENDPOINT R2_BUCKET; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Required retention configuration $name is missing"
+              exit 1
+            fi
+          done
+          python3 -m venv "$RUNNER_TEMP/candidate-retention-venv"
+          "$RUNNER_TEMP/candidate-retention-venv/bin/python" -m pip install boto3
+          "$RUNNER_TEMP/candidate-retention-venv/bin/python" - <<'PY'
+          import botocore.session
+          model = botocore.session.get_session().get_service_model('s3')
+          assert 'IfNoneMatch' in model.operation_model('PutObject').input_shape.members, 'conditional PUT support required'
+          PY
 
       # Do NOT add a disk-reclaim step here, and do not move the browser
       # profile to a roomier filesystem. Both were tried and measured, and
@@ -546,6 +584,7 @@ jobs:
           fi
 
       - name: build ${{ matrix.edition.ref }} (${{ matrix.edition.base }})
+        id: browser-build
         working-directory: e2e
         env:
           TBOX_E2E_FULL: "1"
@@ -655,6 +694,43 @@ jobs:
           fi
 
           echo "Guest verification completed successfully!"
+
+      # Only a completed browser build is retainable. Guest failure remains a
+      # job failure; always() lets this bounded diagnostic step preserve its ISO.
+      # Cancellation/runner loss can still prevent retention: never claim it ran.
+      - name: retain opt-in diagnostic candidate (no automatic expiry)
+        if: ${{ always() && !cancelled() && github.event.inputs.retain_candidate == 'true' && steps.browser-build.outcome == 'success' }}
+        timeout-minutes: 20
+        env:
+          RETAIN_CANDIDATE: ${{ github.event.inputs.retain_candidate }}
+          RUN_FULL: ${{ github.event.inputs.run_full }}
+          ONLY: ${{ github.event.inputs.only }}
+          BENCHMARK: ${{ github.event.inputs.benchmark }}
+          KEEP_ISO: ${{ github.event.inputs.keep_iso }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          echo "::warning::This diagnostic candidate has no automatic expiry. Existing R2 access remains unchanged."
+          python3 scripts/collect-candidate-provenance.py \
+            --root "$GITHUB_WORKSPACE" \
+            --iso "$RUNNER_TEMP/yellowfin-gnome.iso" \
+            --measurements e2e/test-results/build-measurements-qual-evidence-yellowfin-gnome-s1.json \
+            > e2e/test-results/candidate-producer-observations.json
+          "$RUNNER_TEMP/candidate-retention-venv/bin/python" scripts/retain-browser-candidate.py \
+            --iso "$RUNNER_TEMP/yellowfin-gnome.iso" \
+            --provenance e2e/test-results/candidate-producer-observations.json \
+            > e2e/test-results/candidate-retention-result.json
+          {
+            echo "### Diagnostic candidate retained (not qualified)"
+            echo "Chunked candidate bytes and manifest were verified by remote SHA-256 readback."
+            echo "No automatic expiry; storage charges can continue until separately authorized removal."
+            echo '```json'
+            cat e2e/test-results/candidate-retention-result.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: disk after build
         if: always()
