@@ -130,7 +130,7 @@ test("owned collector real Chromium unchanged production layerworker cold warm s
     });
     const origin = await listen(frontend);
     registry = http.createServer(registryHandler(origin,registryCounts)); const registryOrigin = await listen(registry);
-    controller = await openOwnedFrontendController(owned,{documentURL:origin+"/",workerURLs:[origin+"/layerworker.js"],expectedPageScripts:[origin+"/layercache.js"],firstResumeDelayMs:150});
+    controller = await openOwnedFrontendController(owned,{documentURL:origin+"/",workerURLs:[origin+"/layerworker.js"],expectedPageScripts:[origin+"/layercache.js"],browserImplementationProfile:"chromium-156-top-chrome-v1",firstResumeDelayMs:150});
     for (const phase of ["cold","warm","shared"]) {
       const before = networkSnapshot(registryCounts), value = await controller.evaluate(operation(registryOrigin,phase)), after = networkSnapshot(registryCounts);
       checkPhase(phase,value,after);

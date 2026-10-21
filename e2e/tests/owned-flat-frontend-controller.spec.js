@@ -494,3 +494,141 @@ test('terminal reconciliation marks partial when the transport fails between rea
  expect(report.transport.firstFailure.reason).toBe('browser-exited');expect(report.latchedReason).toBe('unsupported-target-census');
  expect(f.socket.calls.filter(p=>p.method==='Target.getTargetInfo')).toHaveLength(1);
 });
+
+// Falsification: this explicit reviewed-browser model cannot accept arbitrary
+// browser_ui/other targets or turn an unresolved startup target into success.
+const UI_PROFILE='chromium-156-top-chrome-v1';
+const UI_URLS=['chrome://webui-toolbar.top-chrome/','chrome://omnibox-popup.top-chrome/omnibox_popup_aim.html','chrome://omnibox-popup.top-chrome/'];
+function browserUIFixture(mode='pending') {
+ const f=fixture(),send=f.socket.send.bind(f.socket);
+ f.owned.pin={playwrightVersion:'1.64.1',browserVersion:'156.0.8078.4',browserRevision:'1248'};
+ f.owned.provenance={observedProduct:'Chrome/156.0.8078.4',executable:{status:'observed',sizeBytes:301186376,sha256:'sha256:377a9fc07b495c3b8d0ab8ec1fdfd153641759f9756fea34d8dfce4de82f5025'}};
+ const targets=UI_URLS.map((url,i)=>({targetId:'ui'+i,type:'browser_ui',url,browserContextId:'context',attached:false,canAccessOpener:false}));
+ f.socket.send=text=>{
+  const p=JSON.parse(text);
+  if(p.method==='Target.setAutoAttach' && p.sessionId===undefined && mode==='before-create')f.socket.event('Target.targetCreated',{targetInfo:{...targets[0],type:'other',url:''}});
+  if(p.method==='Target.createTarget'){
+   for(let i=0;i<targets.length;i++){
+    const info={...targets[i]};
+    if(i===0 && mode!=='direct')Object.assign(info,{type:'other',url:''});
+    if(i===1 && mode==='wrong-context')info.browserContextId='foreign';
+    if(i===1 && mode==='opener')info.openerId='foreign';
+    if(i===1 && mode==='parent')info.parentId='foreign';
+    if(i===1 && mode==='opener-frame')info.openerFrameId='foreign';
+    if(i===1 && mode==='attached')info.attached=true;
+    if(i===1 && mode==='access-opener')info.canAccessOpener=true;
+    if(i===1 && mode==='missing-attachment')delete info.attached;
+    if(i===1 && mode==='unknown-ui')info.url='chrome://unknown.top-chrome/';
+    if(i===1 && mode==='builder-ui')info.url=ORIGIN+'/';
+    if(i===1 && mode==='query')info.url+='?SECRET';
+    if(i===1 && mode==='fragment')info.url+='#SECRET';
+    if(i===1 && mode==='second-empty')Object.assign(info,{type:'other',url:''});
+    if(i===1 && mode==='duplicate-identity')info.url=targets[2].url;
+    f.socket.event('Target.targetCreated',{targetInfo:info});
+    if(i===1 && mode==='replay')f.socket.event('Target.targetCreated',{targetInfo:info});
+   }
+   if(mode==='extra-ui')f.socket.event('Target.targetCreated',{targetInfo:{...targets[0],targetId:'extra'}});
+   if(mode==='extra-page')f.socket.event('Target.targetCreated',{targetInfo:{targetId:'unexpected-page',type:'page',url:'about:blank',browserContextId:'context'}});
+  }
+  if(p.method==='Target.getTargetInfo' && /^ui[0-2]$/.test(p.params.targetId)){
+   f.socket.calls.push(p);let info={...targets.find(t=>t.targetId===p.params.targetId)};
+   if(p.params.targetId==='ui0' && mode!=='direct' && !f.socket.navigated){
+    if(mode==='initialization-timeout')return;
+    if(mode!=='missing-transition')f.socket.event('Target.targetInfoChanged',{targetInfo:{...info,...(mode==='transition-id'?{targetId:'wrong'}:{}),...(mode==='transition-url'?{url:'https://SECRET.invalid/'}:{})}});
+   }
+   if(mode==='readback-id')info.targetId='wrong';
+   if(mode==='readback-url')info.url='chrome://omnibox-popup.top-chrome/wrong';
+   if(mode==='readback-context')info.browserContextId='foreign';
+   if(mode==='readback-attached')info.attached=true;
+   if(f.socket.navigated){
+    if(mode==='final-readback-id')info.targetId='ui1';
+    if(mode==='final-readback-url')info.url=ORIGIN+'/';
+    if(mode==='final-readback-context')info.browserContextId='foreign';
+    if(mode==='final-readback-attached')info.attached=true;
+    if(mode==='final-readback-missing'||mode==='omitted-toolbar-readback-missing')info=undefined;
+    if(mode==='final-readback-timeout')return;
+   }
+   queueMicrotask(()=>f.socket.emit('message',{data:JSON.stringify({id:p.id,result:{targetInfo:info}})}));return;
+  }
+  if(p.method==='Target.getTargets' && f.socket.created){
+   const final=targets.map(t=>({...t}));if(mode==='final-url')final[0].url='chrome://webui-toolbar.top-chrome/wrong';
+   if(mode==='final-context')final[0].browserContextId='foreign';if(mode==='final-attached')final[0].attached=true;
+   if(mode==='final-missing')final.pop();
+   if(mode.startsWith('omitted-toolbar'))final.shift();
+   if(mode==='omitted-toolbar-extra')final.push({...targets[0],targetId:'unobserved'});
+   f.socket.inventoryReply={targetInfos:[f.socket.target(),...final]};f.socket.inventoryFinalOnly=true;
+  }
+  send(text);
+ };
+ return {...f,targets,open:(options={})=>f.open({browserImplementationProfile:UI_PROFILE,...options})};
+}
+for(const mode of ['pending','direct'])test(`reviewed browser UI ${mode} is bound before any page setup or resume`,async()=>{
+ const f=browserUIFixture(mode),controller=await f.open();const result=await controller.finish();
+ expect(result).toMatchObject({browserImplementationProfile:UI_PROFILE,browserUITargets:3,completeCoverage:false,collectorProofEstablished:false});
+ const methods=f.socket.calls.map(p=>p.method),lastRead=methods.slice(0,methods.indexOf('Page.getFrameTree')).lastIndexOf('Target.getTargetInfo');
+ expect(methods.filter(m=>m==='Target.getTargetInfo')).toHaveLength(6);expect(lastRead).toBeLessThan(methods.indexOf('Page.getFrameTree'));
+ expect(lastRead).toBeLessThan(methods.indexOf('Runtime.runIfWaitingForDebugger'));expect(lastRead).toBeLessThan(methods.indexOf('Page.navigate'));
+ expect(f.socket.calls.filter(p=>p.method==='Runtime.runIfWaitingForDebugger').every(p=>p.sessionId==='page')).toBe(true);
+});
+for(const mode of ['before-create','wrong-context','opener','parent','opener-frame','attached','access-opener','missing-attachment','unknown-ui','builder-ui','query','fragment',
+ 'second-empty','duplicate-identity','replay','extra-ui','extra-page','missing-transition','initialization-timeout','transition-id','transition-url','readback-id','readback-url','readback-context','readback-attached'])
+ test(`reviewed browser UI rejects ${mode} before app execution`,async()=>{
+ const f=browserUIFixture(mode),error=await rejected(f.open()),report=controllerDiagnosticsFor(error);
+ expect(error.message).toMatch(/^owned-controller:/);expect(report.navigationIssued).toBe(false);
+ expect(f.socket.calls.some(p=>/runIfWaiting|Debugger.resume|Page.navigate|Runtime.evaluate/.test(p.method))).toBe(false);
+ expect(JSON.stringify(report)+error.stack).not.toContain('SECRET');expect(f.connection.closed).toBe(true);
+});
+for(const mode of ['final-url','final-context','final-attached','final-missing'])test(`reviewed browser UI rejects ${mode} in final census`,async()=>{
+ const f=browserUIFixture(mode),controller=await f.open();await expect(controller.finish()).rejects.toThrow(/^owned-controller:/);expect(f.connection.closed).toBe(true);
+});
+for(const mutation of ['url','type','context','attached','opener','extra','destroyed'])test(`reviewed browser UI rejects later ${mutation} instead of excluding it`,async()=>{
+ const f=browserUIFixture(),controller=await f.open(),info={...f.targets[0]};
+ if(mutation==='url')info.url=ORIGIN+'/';if(mutation==='type')info.type='other';if(mutation==='context')info.browserContextId='foreign';if(mutation==='attached')info.attached=true;if(mutation==='opener')info.openerId='page-target';
+ if(mutation==='extra')f.socket.event('Target.targetCreated',{targetInfo:{...info,targetId:'new-ui'}});
+ else if(mutation==='destroyed')f.socket.event('Target.targetDestroyed',{targetId:info.targetId});
+ else f.socket.event('Target.targetInfoChanged',{targetInfo:info});
+ await expect(controller.finish()).rejects.toThrow(/^owned-controller:/);expect(f.connection.closed).toBe(true);
+});
+for(const field of ['profile','version','revision','playwright','product','hash','size','measured'])test(`reviewed browser UI rejects changed ${field} pin`,async()=>{
+ const f=browserUIFixture();let options={};
+ if(field==='profile')options.browserImplementationProfile='future';if(field==='version')f.owned.pin.browserVersion='157.0.0.0';if(field==='revision')f.owned.pin.browserRevision='1249';
+ if(field==='playwright')f.owned.pin.playwrightVersion='future';if(field==='product')f.owned.provenance.observedProduct='HeadlessChrome/156.0.8078.4';
+ if(field==='hash')f.owned.provenance.executable.sha256='sha256:'+'0'.repeat(64);if(field==='size')f.owned.provenance.executable.sizeBytes++;if(field==='measured')f.owned.provenance.executable.status='unavailable';
+ await expect(f.open(options)).rejects.toThrow('browser-ui-profile-mismatch');expect(f.socket.calls).toHaveLength(0);f.connection.close();
+});
+test('browser implementation model remains opt-in and does not broaden default census',async()=>{
+ const f=browserUIFixture();await expect(f.open({browserImplementationProfile:null})).rejects.toThrow('unsupported-target-census');
+ expect(f.socket.calls.some(p=>p.method==='Runtime.runIfWaitingForDebugger')).toBe(false);
+});
+
+// Falsification: the source-defined toolbar inventory omission never excuses
+// a missing omnibox/page, a substituted readback ID or a late startup reply.
+test('reviewed toolbar may be omitted from getTargets only with exact final readback',async()=>{
+ const f=browserUIFixture('omitted-toolbar'),controller=await f.open();
+ expect((await controller.finish()).browserUITargets).toBe(3);
+ expect(f.socket.calls.filter(p=>p.method==='Target.getTargetInfo'&&p.params.targetId==='ui0')).toHaveLength(2);
+});
+for(const mode of ['omitted-toolbar-extra','omitted-toolbar-readback-missing','final-readback-id','final-readback-url','final-readback-context','final-readback-attached','final-readback-missing','final-readback-timeout'])
+ test(`reviewed browser UI rejects ${mode} at final readback`,async()=>{
+ const f=browserUIFixture(mode),controller=await f.open();
+ await expect(controller.finish()).rejects.toThrow(/^owned-controller:/);expect(f.connection.closed).toBe(true);
+});
+for(const phase of ['initialization','final'])test(`late ${phase} readback cannot advance or finish the model`,async()=>{
+ const f=browserUIFixture();let release,cleanupStarted,releaseRead,intercepted=false;
+ const controller=phase==='final'?await f.open():null;
+ const cleanup=new Promise(resolve=>{cleanupStarted=resolve;});
+ f.holdClose(()=>{cleanupStarted();return new Promise(resolve=>{release=resolve;});});
+ const send=f.connection.send.bind(f.connection);
+ f.connection.send=(method,...args)=>{
+  if(method==='Target.getTargetInfo'&&!intercepted){intercepted=true;return new Promise(resolve=>{releaseRead=resolve;});}
+  return send(method,...args);
+ };
+ const outcome=rejected(controller?controller.finish():f.open({timeoutMs:10}));await cleanup;
+ const before=f.socket.calls.length;
+ releaseRead({targetInfo:f.targets[0]});await tick();
+ expect(f.socket.calls).toHaveLength(before);
+ if(phase==='initialization')expect(f.socket.calls.some(p=>['Page.getFrameTree','Network.enable','Runtime.runIfWaitingForDebugger','Page.navigate'].includes(p.method))).toBe(false);
+ release();const error=await outcome;
+ expect(controllerDiagnosticsFor(error).latchedReason).toBe(`browser-ui-${phase}-timeout`);
+ expect(f.connection.closed).toBe(true);
+});

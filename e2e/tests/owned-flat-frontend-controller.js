@@ -7,7 +7,7 @@ const { BodyReservations } = require("./owned-flat-body-reservations");
 const { deadline } = require("./owned-flat-cdp");
 const reasons = new WeakMap(), diagnostics = new WeakMap(), causes = new WeakMap();
 const bad = code => { const error = new Error(`owned-controller:${code}`); reasons.set(error, code); return error; };
-const COMMANDS = new Set(["Target.getTargets", "Target.setDiscoverTargets", "Target.createBrowserContext", "Target.setAutoAttach", "Target.createTarget",
+const COMMANDS = new Set(["Target.getTargets", "Target.setDiscoverTargets", "Target.createBrowserContext", "Target.setAutoAttach", "Target.createTarget", "Target.getTargetInfo",
   "Page.getFrameTree", "Page.enable", "Page.navigate", "Runtime.enable", "Runtime.runIfWaitingForDebugger", "Runtime.evaluate",
   "Network.enable", "Network.setCacheDisabled", "Network.setBypassServiceWorker", "Debugger.enable", "Fetch.enable"]);
 const EVENTS = new Set(["Target.targetCreated", "Target.targetInfoChanged", "Target.attachedToTarget", "Target.targetDestroyed", "Target.targetCrashed",
@@ -52,13 +52,76 @@ function targetURLObservation(value) {
   } catch { return Object.freeze(unknown); }
 }
 
+// Opt-in test model for this reviewed source/artifact only. Browser UI belongs
+// to the browser implementation, never the builder's executable byte ledger.
+const BROWSER_UI_PROFILE = "chromium-156-top-chrome-v1";
+// Independently measured selected ELF bytes, not a vendor attestation.
+const REVIEWED_BROWSER_SHA256 = "sha256:377a9fc07b495c3b8d0ab8ec1fdfd153641759f9756fea34d8dfce4de82f5025";
+// Chromium f842f52: webui_url_constants.h249-252,372-373; toolbar and
+// omnibox controllers inherit TopChromeWebUIController / kUIElement.
+const BROWSER_UI_URLS = new Map([
+  ["chrome://webui-toolbar.top-chrome/", "toolbar"],
+  ["chrome://omnibox-popup.top-chrome/", "omnibox"],
+  ["chrome://omnibox-popup.top-chrome/omnibox_popup_aim.html", "omnibox-aim"],
+]);
+function reviewedBrowser(owned, profile) {
+  if (profile === null) return false;
+  if (profile !== BROWSER_UI_PROFILE || owned.pin?.playwrightVersion !== "1.64.1" || owned.pin?.browserRevision !== "1248" ||
+      owned.pin?.browserVersion !== "156.0.8078.4" || owned.provenance?.observedProduct !== "Chrome/156.0.8078.4" ||
+      owned.provenance?.executable?.status !== "observed" || owned.provenance.executable.sha256 !== REVIEWED_BROWSER_SHA256 ||
+      owned.provenance.executable.sizeBytes !== 301186376) throw bad("browser-ui-profile-mismatch");
+  return true;
+}
+class BrowserUITargets {
+  constructor(context) { this.context = context; this.targets = new Map(); this.identities = new Map(); this.pendingCreated = false; this.sealed = false; }
+  owns(targetId) { return this.targets.has(targetId); }
+  inspect(info) {
+    if (!info || typeof info.targetId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(info.targetId) || info.browserContextId !== this.context || info.attached !== false || info.canAccessOpener !== false ||
+        ["parentId", "openerId", "parentFrameId", "openerFrameId"].some(key => info[key] !== undefined)) throw bad("browser-ui-ownership-mismatch");
+  }
+  observe(method, info, creating) {
+    const previous = this.targets.get(info?.targetId);
+    if (!previous && !["other", "browser_ui"].includes(info?.type)) return false;
+    this.inspect(info);
+    if (method === "Target.targetCreated") {
+      if (previous || !creating || this.sealed || this.targets.size >= 3) throw bad("browser-ui-creation-mismatch");
+      if (info.type === "other" && info.url === "" && !this.pendingCreated) {
+        this.pendingCreated = true; this.targets.set(info.targetId, { pending: true, confirmed: false }); return true;
+      }
+    } else if (!previous) throw bad("browser-ui-unobserved-target");
+    if (previous?.pending && !this.sealed && info.type === "other" && info.url === "") return true;
+    const identity = info.type === "browser_ui" && BROWSER_UI_URLS.get(info.url);
+    if (!identity || previous && !previous.pending && previous.identity !== identity ||
+        this.identities.has(identity) && this.identities.get(identity) !== info.targetId) throw bad("browser-ui-identity-mismatch");
+    this.identities.set(identity, info.targetId);
+    this.targets.set(info.targetId, { identity, url: info.url, pending: false, confirmed: previous?.confirmed === true });
+    return true;
+  }
+  confirm(targetId, info) {
+    const record = this.targets.get(targetId);
+    if (!record || record.pending || info?.targetId !== targetId) throw bad("browser-ui-transition-missing");
+    this.inspect(info);
+    if (info.type !== "browser_ui" || info.url !== record.url) throw bad("browser-ui-readback-mismatch");
+    record.confirmed = true;
+  }
+  ready() {
+    if ([...this.targets.values()].some(record => record.pending || !record.confirmed)) throw bad("browser-ui-transition-missing");
+    this.sealed = true;
+  }
+  current(info, targetId = info?.targetId) {
+    if (info?.targetId !== targetId) throw bad("browser-ui-final-mismatch");
+    const record = this.targets.get(targetId); this.inspect(info);
+    if (!this.sealed || !record?.confirmed || info.type !== "browser_ui" || info.url !== record.url) throw bad("browser-ui-final-mismatch");
+  }
+}
+
 const NETWORK = new Set(["Network.requestWillBeSent", "Network.requestServedFromCache", "Network.responseReceived", "Network.loadingFinished", "Network.loadingFailed"]);
-async function openOwnedFrontendController(owned, { documentURL, workerURLs, expectedPageScripts = [], firstResumeDelayMs = 0, timeoutMs = 10000 } = {}) {
-  let c, origin;
+async function openOwnedFrontendController(owned, { documentURL, workerURLs, expectedPageScripts = [], firstResumeDelayMs = 0, timeoutMs = 10000, browserImplementationProfile = null } = {}) {
+  let c, origin, browserUIEnabled, browserUI;
   try {
   if (!owned?.connection || !(owned.connection.bodyReservations instanceof BodyReservations) ||
       typeof owned.verify !== "function" || typeof owned.close !== "function" || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000) throw bad("configuration-invalid");
-  c = owned.connection; origin = new URL(documentURL).origin;
+  c = owned.connection; origin = new URL(documentURL).origin; browserUIEnabled = reviewedBrowser(owned, browserImplementationProfile);
   if (!Array.isArray(expectedPageScripts) || expectedPageScripts.length > 64 || new Set(expectedPageScripts).size !== expectedPageScripts.length ||
       expectedPageScripts.some(url => typeof url !== "string" || new URL(url).origin !== origin || url === documentURL)) throw bad("page-script-policy-invalid");
   } catch (error) {
@@ -111,6 +174,7 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
     transport: c.diagnostics?.() || null, lifecycle: owned.lifecycle?.() || null,
     targetReconciliation: Object.freeze({ status: reconciliationStatus, requested: reconciliationRequested,
       targetOverflow: diagnosticTargetOverflow, results: Object.freeze([...reconciledTargets]) }),
+    browserImplementationProfile: browserUIEnabled ? BROWSER_UI_PROFILE : null, browserUITargets: browserUI?.targets.size || 0,
     contextCreated: !!context, pageAttached: !!page, frameObserved: !!frame, navigationIssued,
     runtimeContextSeen: !!runtimeContext, runtimeFrameMatches: !!runtimeContext && !!frame && runtimeContext.frame === frame,
     navigationFrameMatches: !!frame && !!navigationFrame && frame === navigationFrame,
@@ -174,7 +238,10 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
       if (["Target.targetDestroyed", "Target.targetCrashed", "Target.detachedFromTarget", "Inspector.detached"].includes(method)) throw bad("target-lifecycle-lost");
       if (method === "Target.targetCreated" || method === "Target.targetInfoChanged") {
         const info = p.targetInfo;
-        if (!id(info?.targetId) || !["page", "worker"].includes(info.type) || discovered.size >= 8 && !discovered.has(info.targetId)) throw bad("unsupported-target-census");
+        const implementation = browserUI?.observe(method, info, ["create-page", "browser-ui-initialization"].includes(stage)) === true;
+        if (!id(info?.targetId) || !implementation && !["page", "worker"].includes(info.type) || discovered.size >= 8 && !discovered.has(info.targetId)) throw bad("unsupported-target-census");
+        if (browserUIEnabled && info.type === "page" && !discovered.has(info.targetId) &&
+            (browserUI.sealed || [...discovered.values()].some(target => target.type === "page"))) throw bad("extra-application-target");
         if (method === "Target.targetCreated" && discovered.has(info.targetId)) throw bad("duplicate-target-census");
         discovered.set(info.targetId, { type: info.type, context: info.browserContextId, parent: info.parentId, url: info.url }); return;
       }
@@ -271,10 +338,28 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
     stage = "create-context";
     context = (await send("Target.createBrowserContext", { disposeOnDetach: true })).browserContextId;
     if (!id(context)) throw bad("context-missing");
+    if (browserUIEnabled) browserUI = new BrowserUITargets(context);
     stage = "browser-autoattach"; await send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true,
       filter: [{ type: "page" }, { exclude: true }] });
     stage = "create-page"; const created = await send("Target.createTarget", { url: "about:blank", browserContextId: context });
     if (!page || created.targetId !== pageTarget) throw bad("page-attachment-missing");
+    if (browserUI) {
+      stage = "browser-ui-initialization"; let accepting = true;
+      try {
+        await deadline((async () => {
+          for (const targetId of [...browserUI.targets.keys()]) {
+            if (!accepting) return; check();
+            const result = await send("Target.getTargetInfo", { targetId });
+            if (!accepting) return; check(); browserUI.confirm(targetId, result.targetInfo);
+          }
+          if (accepting) browserUI.ready();
+        })(), Math.min(timeoutMs, 1000), "browser-ui-initialization-timeout");
+      } catch (error) {
+        if (error?.message === "owned-cdp:browser-ui-initialization-timeout") throw bad("browser-ui-initialization-timeout");
+        throw error;
+      } finally { accepting = false; }
+      check();
+    }
     stage = "initial-frame"; const blank = (await send("Page.getFrameTree", {}, page)).frameTree;
     if (!id(blank?.frame?.id) || blank.frame.url !== "about:blank" || blank.childFrames?.length) throw bad("initial-frame-mismatch");
     initialFrame = blank.frame.id;
@@ -313,14 +398,39 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
           const tree = (await send("Page.getFrameTree", {}, page)).frameTree;
           if (tree?.frame?.id !== frame || tree.frame.url !== documentURL || tree.frame.securityOrigin !== origin || tree.childFrames?.length) throw fail("final-frame-census-mismatch");
           const targets = (await send("Target.getTargets")).targetInfos;
-          if (!Array.isArray(targets) || targets.length !== 1 + attachedWorkers.size || discovered.size !== targets.length ||
+          if (!Array.isArray(targets) || discovered.size !== 1 + attachedWorkers.size + (browserUI?.targets.size || 0) ||
               attachedWorkers.size !== workerURLs.length || new Set(targets.map(target => target.targetId)).size !== targets.length) throw fail("final-target-census-mismatch");
+          const listed = new Set(targets.map(target => target.targetId));
+          // Chromium f842f52 target_handler.cc1464-1468 / waap_utils.cc71-77
+          // can omit only the toolbar host here when InitialWebUI is enabled.
+          // No omnibox/application omission is permitted; all known UI also
+          // require exact-ID readback below, including an omitted toolbar.
+          const omitted = [...discovered.keys()].filter(targetId => !listed.has(targetId));
+          if (omitted.some(targetId => browserUI?.targets.get(targetId)?.identity !== "toolbar") ||
+              targets.length + omitted.length !== discovered.size) throw fail("final-target-census-mismatch");
           for (const target of targets) {
             const observed = discovered.get(target.targetId);
             if (!observed || target.browserContextId !== context || observed.type !== target.type) throw fail("final-target-census-mismatch");
+            if (browserUI?.owns(target.targetId)) { browserUI.current(target); continue; }
             if (target.targetId === pageTarget) {
               if (target.type !== "page" || target.url !== documentURL) throw fail("final-target-census-mismatch");
             } else if (target.type !== "worker" || !attachedWorkers.has(target.targetId) || target.parentId !== pageTarget || !workerURLs.includes(target.url)) throw fail("final-target-census-mismatch");
+          }
+          if (browserUI) {
+            let accepting = true;
+            try {
+              await deadline((async () => {
+                for (const targetId of browserUI.targets.keys()) {
+                  if (!accepting) return; check();
+                  const result = await send("Target.getTargetInfo", { targetId });
+                  if (!accepting) return; check(); browserUI.current(result.targetInfo, targetId);
+                }
+              })(), Math.min(timeoutMs, 1000), "browser-ui-final-timeout");
+            } catch (error) {
+              if (error?.message === "owned-cdp:browser-ui-final-timeout") throw bad("browser-ui-final-timeout");
+              throw error;
+            } finally { accepting = false; }
+            check();
           }
           const bytes = await state.drainSnapshot(); check();
           if (initialContexts.size || [...pageScripts.values()].some(script => script.context !== runtimeContext.id)) throw fail("page-script-context-mismatch");
@@ -338,6 +448,7 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
           await close(); state.assertNoFailure();
           if (failure || c.socket?.failure || (c.failure && c.failure.message !== "owned-cdp:transport-disposed")) throw fail("late-observation-failed");
           return Object.freeze({ ...bytes, freshContextCreated: true, mainFrameCount: 1, terminalCleanupVerified: true,
+            browserImplementationProfile: browserUIEnabled ? BROWSER_UI_PROFILE : null, browserUITargets: browserUI?.targets.size || 0,
             observedBrowserVersion: owned.pin.browserVersion, externallyServedPageScripts: external.length, controllerExpressions: evaluations.size });
         } catch (error) {
           fail(reasons.get(error) || "finish-failed");
