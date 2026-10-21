@@ -15,6 +15,8 @@ const EVENTS = new Set(["Target.targetCreated", "Target.targetInfoChanged", "Tar
   "Debugger.scriptParsed", "Network.requestWillBeSent", "Network.responseReceived", "Network.loadingFinished", "Network.loadingFailed", "Fetch.requestPaused"]);
 function controllerDiagnosticsFor(error) { return diagnostics.get(error) || null; }
 const id = value => typeof value === "string" && value.length > 0 && value.length <= 256;
+const observedTargetType = value => typeof value === "string" && /^[a-z_]{1,40}$/.test(value);
+const targetType = value => value === undefined ? "missing" : typeof value !== "string" ? "invalid" : value === "" ? "empty" : observedTargetType(value) ? value : "other";
 const urlKind = value => value === "" ? "empty" : value === "about:blank" ? "about-blank" : typeof value === "string" ? "other" : "missing";
 // Public Chromium 156.0.8078.4 manifest-key IDs; diagnostic labels only.
 // Exact source commit f842f52ef39fd97b449eb27cff414bf05a98ddce.
@@ -79,8 +81,10 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
     const shape = item => item === undefined ? "missing" : item === null ? "null" : Array.isArray(item) ? "array" : typeof item;
     const targets = array ? list.slice(0, 8).map(item => Object.freeze({
       urlFacts: targetURLObservation(item?.url), entryShape: shape(item), target: alias(item?.targetId), targetIdPresent: !!item && Object.hasOwn(item, "targetId"), targetIdValid: id(item?.targetId),
-      type: item?.type === undefined ? "missing" : typeof item.type !== "string" ? "invalid" : item.type === "" ? "empty" :
-        ["page", "iframe", "worker", "shared_worker", "service_worker", "browser", "tab"].includes(item.type) ? item.type : "other",
+      type: targetType(item?.type), typeObserved: observedTargetType(item?.type),
+      opener: alias(item?.openerId), openerFrame: alias(item?.openerFrameId), parent: alias(item?.parentId), parentFrame: alias(item?.parentFrameId),
+      openerPresent: id(item?.openerId), parentPresent: id(item?.parentId),
+      canAccessOpener: typeof item?.canAccessOpener === "boolean" ? item.canAccessOpener : null,
       urlCategory: item?.url === undefined ? "missing" : item.url === null ? "null" : typeof item.url !== "string" ? "invalid" : urlKind(item.url),
       context: alias(item?.browserContextId), contextIdPresent: !!item && Object.hasOwn(item, "browserContextId"), contextIdValid: id(item?.browserContextId),
       contextOwnedMatch: context ? item?.browserContextId === context : null,
@@ -92,7 +96,7 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
     if (trace.length === 64) { trace.shift(); dropped++; }
     trace.push(Object.freeze({ sequence: ++sequence, stage, ...value }));
   };
-  const snapshot = reason => Object.freeze({ profile: "owned-controller-startup-diagnostic-v1", stage, reason,
+  const snapshot = reason => Object.freeze({ profile: "owned-controller-startup-diagnostic-v1", stage, reason, latchedReason: reasons.get(failure) || null,
     contextCreated: !!context, pageAttached: !!page, frameObserved: !!frame, navigationIssued,
     runtimeContextSeen: !!runtimeContext, runtimeFrameMatches: !!runtimeContext && !!frame && runtimeContext.frame === frame,
     navigationFrameMatches: !!frame && !!navigationFrame && frame === navigationFrame,
@@ -103,7 +107,7 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
   const check = () => { if (failure) throw failure; if (c.failure || c.socket?.failure) throw fail("transport-failed"); if (stopped) throw bad("closed"); };
   const send = (method, params = {}, session) => {
     check(); const command = COMMANDS.has(method) ? method : "other", owner = alias(session);
-    note({ kind: "command", command, outcome: "sent", session: owner });
+    note({ kind: "command", command, outcome: "sent", session: owner, commandBrowserContext: alias(params.browserContextId) });
     return c.send(method, params, session).then(value => {
       note({ kind: "command", command, outcome: "acknowledged", session: owner,
         replyTarget: alias(value?.targetId), replyContext: alias(value?.browserContextId), replyFrame: alias(value?.frameTree?.frame?.id),
@@ -114,20 +118,26 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
   let resolveLoaded; const loaded = new Promise((resolve,reject) => { resolveLoaded = resolve; rejectLoaded = reject; }); loaded.catch(() => {});
   const maybeLoaded = () => { if (pageLoaded && frame && runtimeContext) resolveLoaded(); };
   const onEvent = packet => {
-    if (stopped || failure || (closing && c.closed)) return;
+    if (stopped || (closing && c.closed)) return;
     try {
       const { method, params: p, sessionId: session } = packet;
       // Stream data progress is not retained or treated as executable evidence.
       // The tiny diagnostic cap applies only to retained/control/lifecycle events.
       if (method === "Network.dataReceived") return;
-      note({ kind: "event", event: EVENTS.has(method) ? method : "other", session: alias(session),
+      note({ kind: "event", event: EVENTS.has(method) ? method : "other", session: alias(session), afterFailure: !!failure,
         request: alias(p.requestId), target: alias(p.targetInfo?.targetId), parent: alias(p.targetInfo?.parentId),
+        opener: alias(p.targetInfo?.openerId), openerFrame: alias(p.targetInfo?.openerFrameId), parentFrame: alias(p.targetInfo?.parentFrameId),
+        openerPresent: id(p.targetInfo?.openerId), openerIsPage: !!pageTarget && p.targetInfo?.openerId === pageTarget,
+        targetContext: alias(p.targetInfo?.browserContextId), targetContextPresent: id(p.targetInfo?.browserContextId),
+        targetContextOwnedMatch: context && id(p.targetInfo?.browserContextId) ? p.targetInfo.browserContextId === context : null,
+        targetAttached: typeof p.targetInfo?.attached === "boolean" ? p.targetInfo.attached : null,
+        canAccessOpener: typeof p.targetInfo?.canAccessOpener === "boolean" ? p.targetInfo.canAccessOpener : null,
         script: alias(p.scriptId), scriptExpected: expectedPageScripts.includes(p.url), scriptControllerOwned: evaluations.has(p.url),
         scriptLanguage: ["JavaScript", "WebAssembly"].includes(p.scriptLanguage) ? p.scriptLanguage : p.scriptLanguage === undefined ? "missing" : "other",
         attachedSession: alias(p.sessionId), frame: alias(p.frame?.id || p.frameId || p.context?.auxData?.frameId),
         context: alias(p.context?.id || p.executionContextId), isDefault: typeof p.context?.auxData?.isDefault === "boolean" ? p.context.auxData.isDefault : null,
         pageSession: !!page && session === page, waiting: typeof p.waitingForDebugger === "boolean" ? p.waitingForDebugger : null,
-        targetType: ["page", "worker", "shared_worker", "service_worker"].includes(p.targetInfo?.type) ? p.targetInfo.type : p.targetInfo ? "other" : null,
+        targetType: p.targetInfo ? targetType(p.targetInfo.type) : null, targetTypeObserved: observedTargetType(p.targetInfo?.type),
         parentPresent: !!p.targetInfo?.parentId, parentIsPage: !!pageTarget && p.targetInfo?.parentId === pageTarget,
         initialFrameMatches: !!initialFrame && (p.frame?.id || p.context?.auxData?.frameId) === initialFrame,
         mainFrameMatches: !!frame && (p.frame?.id || p.context?.auxData?.frameId) === frame,
@@ -137,6 +147,9 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
         aboutBlankURL: (p.request?.url || p.frame?.url || p.targetInfo?.url) === "about:blank",
         targetURLKind: urlKind(p.targetInfo?.url),
         documentURLMatches: typeof (p.request?.url || p.frame?.url || p.targetInfo?.url) === "string" ? (p.request?.url || p.frame?.url || p.targetInfo?.url) === documentURL : null });
+      // A latched failure admits no further observations into the byte/census
+      // state. Retain only bounded diagnostics until normal cleanup closes it.
+      if (failure) return;
       if (++eventCount > 8192) throw bad("event-bound");
       if (["Target.targetDestroyed", "Target.targetCrashed", "Target.detachedFromTarget", "Inspector.detached"].includes(method)) throw bad("target-lifecycle-lost");
       if (method === "Target.targetCreated" || method === "Target.targetInfoChanged") {

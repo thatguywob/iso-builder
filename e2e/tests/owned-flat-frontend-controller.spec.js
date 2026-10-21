@@ -300,3 +300,58 @@ test("multiple unknown extension IDs are retained under the existing explicit in
  expect(inventory.targets.map(item=>item.urlFacts.canonicalExtensionId)).toEqual(["a".repeat(32),"b".repeat(32)]);
  expect(JSON.stringify(report)).not.toContain("SECRET");
 });
+
+// Falsification: newly exposed type/context relationships are observations only;
+// tab/browser/UI/iframe and arbitrary new types still fail the same admission gate.
+for(const type of ["tab","browser","iframe","browser_ui","other","a".repeat(40)])test(`target event exact bounded type ${type}`,async()=>{
+ const f=fixture(),send=f.socket.send.bind(f.socket);
+ f.socket.send=text=>{const p=JSON.parse(text);if(p.method==='Target.createTarget')f.socket.event('Target.targetCreated',{targetInfo:{targetId:'SECRET_AUX',type,url:'',browserContextId:'context',openerId:'SECRET_OPENER',openerFrameId:'SECRET_OPENER_FRAME',parentId:'SECRET_PARENT',parentFrameId:'SECRET_PARENT_FRAME',attached:false,canAccessOpener:false}});send(text);};
+ const report=controllerDiagnosticsFor(await rejected(f.open())),event=report.trace.find(item=>item.event==='Target.targetCreated');
+ expect(event).toMatchObject({targetType:type,targetTypeObserved:true,targetURLKind:'empty',targetContextPresent:true,targetContextOwnedMatch:true,openerPresent:true,parentPresent:true,targetAttached:false,canAccessOpener:false});
+ expect(event.opener).toMatch(/^i[0-9]+$/);expect(event.parent).toMatch(/^i[0-9]+$/);expect(event.openerFrame).toMatch(/^i[0-9]+$/);expect(event.parentFrame).toMatch(/^i[0-9]+$/);
+ expect(report.latchedReason).toBe('unsupported-target-census');expect(JSON.stringify(report)).not.toContain('SECRET');
+ expect(f.socket.calls.some(p=>p.method==='Page.navigate')).toBe(false);
+});
+for(const [index,type] of ['SECRET_TYPE','https://SECRET.invalid','a'.repeat(41),'with-dash',42,null,undefined].entries())test(`target event malformed type ${index} remains redacted`,async()=>{
+ const f=fixture(),send=f.socket.send.bind(f.socket);f.socket.send=text=>{if(JSON.parse(text).method==='Target.createTarget')f.socket.event('Target.targetCreated',{targetInfo:{targetId:'SECRET',type,url:'',browserContextId:'SECRET_FOREIGN'}});send(text);};
+ const report=controllerDiagnosticsFor(await rejected(f.open())),event=report.trace.find(item=>item.event==='Target.targetCreated');
+ expect(event.targetTypeObserved).toBe(false);expect(event.targetType).toMatch(/^(other|invalid|missing)$/);expect(event.targetContextOwnedMatch).toBe(false);expect(JSON.stringify(report)).not.toMatch(/SECRET|https:/);
+});
+test('target inventory retains actual bounded browser_ui type and aliased relationships',async()=>{
+ const f=fixture();f.socket.inventoryReply={targetInfos:[{targetId:'SECRET',type:'browser_ui',url:'',browserContextId:'SECRET_CONTEXT',parentId:'SECRET_PARENT',openerId:'SECRET_OPENER',openerFrameId:'SECRET_FRAME',parentFrameId:'SECRET_PARENT_FRAME',canAccessOpener:true}]};
+ const report=controllerDiagnosticsFor(await rejected(f.open())),item=report.trace.at(-1).targetInventory.targets[0];
+ expect(item).toMatchObject({type:'browser_ui',typeObserved:true,parentPresent:true,openerPresent:true,canAccessOpener:true});expect(report.reason).toBe('context-not-isolated');expect(JSON.stringify(report)).not.toContain('SECRET');
+});
+test('creation context command and created event share the same opaque context alias',async()=>{
+ const f=fixture(),controller=await f.open();f.socket.event('Page.frameAttached',{},'page');const report=controllerDiagnosticsFor(await rejected(controller.finish()));
+ const command=report.trace.find(item=>item.command==='Target.createTarget'&&item.outcome==='sent'),event=report.trace.find(item=>item.event==='Target.targetCreated');
+ expect(command.commandBrowserContext).toBe(event.targetContext);expect(event.targetContextOwnedMatch).toBe(true);
+});
+
+test('later target packets after rejection add diagnostics only and preserve the first failure',async()=>{
+ const f=fixture(),send=f.socket.send.bind(f.socket);
+ f.socket.send=text=>{const p=JSON.parse(text);if(p.method==='Target.createTarget') {
+  f.socket.event('Target.targetCreated',{targetInfo:{targetId:'SECRET_AUX',type:'browser_ui',url:'',browserContextId:'context'}});
+  f.socket.event('Network.requestWillBeSent',{requestId:'SECRET_REQUEST',type:'Script',request:{url:'https://SECRET.invalid',method:'GET'}},'SECRET_SESSION');
+  f.socket.event('Network.loadingFinished',{requestId:'SECRET_REQUEST'},'SECRET_SESSION');
+ }send(text);};
+ const error=await rejected(f.open()),report=controllerDiagnosticsFor(error),events=report.trace.filter(item=>item.kind==='event');
+ expect(error.message).toBe('owned-controller:unsupported-target-census');expect(report.latchedReason).toBe('unsupported-target-census');
+ expect(events.filter(item=>item.event==='Target.targetCreated')).toHaveLength(2);
+ expect(events.at(-1)).toMatchObject({event:'Target.attachedToTarget',afterFailure:true,targetType:'page'});
+ expect(report.pageAttached).toBe(false);expect(report.discoveredTargets).toBe(0);
+ expect(report.trace.some(item=>item.kind==='attachment'&&item.outcome==='page-accepted')).toBe(false);
+ expect(f.socket.calls.some(p=>/runIfWaiting|resume|getResponseBody|Page.navigate/.test(p.method))).toBe(false);
+ expect(f.connection.bodyReservations.snapshot().reservedBytes).toBe(0);expect(f.connection.closed).toBe(true);
+ const encoded=JSON.stringify(report);f.socket.event('Target.targetCreated',{targetInfo:{targetId:'SECRET_LATE',type:'page'}});expect(JSON.stringify(report)).toBe(encoded);expect(encoded).not.toContain('SECRET');
+});
+test('post-failure diagnostic packets retain hard ring and alias caps without new commands',async()=>{
+ const f=fixture(),send=f.socket.send.bind(f.socket);
+ f.socket.send=text=>{if(JSON.parse(text).method==='Target.createTarget'){
+  f.socket.event('Target.targetCreated',{targetInfo:{targetId:'SECRET_FIRST',type:'browser_ui',url:''}});
+  for(let i=0;i<100;i++)f.socket.event('SECRET_METHOD',{requestId:'SECRET_REQUEST_'+i,targetInfo:{targetId:'SECRET_TARGET_'+i,type:'browser_ui',browserContextId:'SECRET_CONTEXT_'+i}},'SECRET_SESSION');
+ }send(text);};
+ const report=controllerDiagnosticsFor(await rejected(f.open()));expect(report.trace).toHaveLength(64);expect(report.aliases).toBe(64);expect(report.aliasOverflow).toBe(true);expect(report.dropped).toBeGreaterThan(0);
+ expect(report.latchedReason).toBe('unsupported-target-census');expect(report.trace.some(item=>item.event==='other'&&item.afterFailure)).toBe(true);expect(JSON.stringify(report)).not.toContain('SECRET');
+ expect(f.socket.calls.some(p=>/runIfWaiting|resume|getResponseBody|Page.navigate/.test(p.method))).toBe(false);
+});
