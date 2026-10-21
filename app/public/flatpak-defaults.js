@@ -1,6 +1,7 @@
 /* App requests are intent, never installed inventory. */
 (function(root) {
-  const valid = id => typeof id === 'string' && /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){2,}$/.test(id);
+  const valid = typeof module !== 'undefined' && module.exports
+    ? require('./builder-config.js').validFlatpakId : root.TboxBuilderConfig.validFlatpakId;
   function suggestions(facts, declared = []) {
     const inspected = Array.isArray(facts?.suggestedFlatpaks);
     return { ids: [...new Set((inspected ? facts.suggestedFlatpaks : declared).filter(valid))],

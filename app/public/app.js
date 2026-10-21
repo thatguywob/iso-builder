@@ -31,6 +31,8 @@ try {
   if (main) { main.textContent = "This builder’s configuration is missing or invalid. Contact its maintainer."; main.setAttribute("role", "alert"); }
   throw error;
 }
+const validFlatpakId = globalThis.TboxBuilderConfig.validFlatpakId;
+
 function applyBuilderBranding() {
   if (!document.querySelector) return; // the catalog parity VM has no visual DOM
   const config = BUILDER_CONFIG, brand = config.brand;
@@ -167,7 +169,7 @@ function parseCuratedSet(text) {
   for (const m of text.matchAll(/^\[Flatpak Preinstall ([^\]\s]+)\]([^[]*)/gm)) {
     if (!/^IsRuntime\s*=\s*true/im.test(m[2])) ids.push(m[1]);
   }
-  return ids.filter((id) => URL_FLATPAK_ID.test(id));
+  return ids.filter((id) => validFlatpakId(id));
 }
 
 function curatedSetsFor(desktop) {
@@ -420,7 +422,7 @@ async function fpSearch(q) {
     const d = await r.json();
     if (version !== fpSearchVersion || $("fpsearch").value.trim() !== q) return;
     fpHits = (Array.isArray(d.hits) ? d.hits : []).filter(hit =>
-      hit && typeof hit.app_id === "string" && URL_FLATPAK_ID.test(hit.app_id)).slice(0, 8);
+      hit && typeof hit.app_id === "string" && validFlatpakId(hit.app_id)).slice(0, 8);
     fpRenderResults();
     $("fpstatus").textContent = fpHits.length ? `${fpHits.length} app${fpHits.length === 1 ? "" : "s"} found. Choose apps to include.` : "No apps found. Try another name.";
   } catch (e) {
@@ -1867,7 +1869,6 @@ function urlImageUsesDefaultRegistry(raw) {
 }
 
 const SUPPLY_CHAIN_PARAMS = ["shim", "initrd"];
-const URL_FLATPAK_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const URL_PACKAGE_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
 
 // Apply URL params.
@@ -1918,7 +1919,7 @@ const URL_PACKAGE_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
   }
   if (q.has("flatpaks")) fpDefaults.edit([]);
   if (q.get("flatpaks")) for (const id of q.get("flatpaks").split(",").filter(Boolean)) {
-    if (URL_FLATPAK_ID.test(id)) fpAdd(id);
+    if (validFlatpakId(id)) fpAdd(id);
     else log("Ignored ?flatpaks= entry from this link — not a Flatpak application id.");
   }
   if (q.get("packages")) for (const id of q.get("packages").split(",").filter(Boolean)) {

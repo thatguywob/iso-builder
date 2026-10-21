@@ -32,3 +32,10 @@ test('stale inspection is rejected while same-operation removal keeps its diagno
  logs.length=0;assert.equal(context.inspectionStillCurrent({}),false);assert.equal(logs.length,0);
  context.operationMatchesForm=()=>true;assert.equal(context.inspectionStillCurrent(op),true);
 });
+
+test('all suggested and declared IDs follow the shared canonical grammar',()=>{
+ const cases=require('./fixtures/builder-config-flatpak-ids.json');
+ const ids=cases.map(c=>c.id), accepted=cases.filter(c=>c.valid).map(c=>c.id);
+ assert.deepEqual(suggestions({suggestedFlatpaks:ids}).ids,accepted);
+ assert.deepEqual(suggestions({},ids).ids,accepted);
+});
