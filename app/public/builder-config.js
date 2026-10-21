@@ -3,7 +3,8 @@
 (function (root) {
   'use strict';
   const ID = /^[a-z0-9][a-z0-9-]*$/;
-  const APP_ID = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){2,}$/;
+  const APP_ID = /^(?:[A-Za-z_][A-Za-z0-9_]*\.){2,}[A-Za-z_-][A-Za-z0-9_-]*$/;
+  function validFlatpakId(id) { return typeof id === "string" && id.length <= 255 && APP_ID.exec(id)?.[0] === id; }
   const PLATFORMS = ['linux/amd64', 'linux/amd64/v2', 'linux/amd64/v3', 'linux/arm64'];
   function fail(message) { throw new Error(`Builder configuration: ${message}`); }
   function object(value, allowed, required, where) {
@@ -56,7 +57,7 @@
       const fields=guided?['id','default_flatpaks']:['id','name','description','default_flatpaks'];
       object(d,fields,fields,'desktop');
       identifier(d.id,'desktop.id'); if (!guided) { text(d.name,'desktop.name'); text(d.description,'desktop.description'); } list(d.default_flatpaks,'default_flatpaks');
-      if (d.default_flatpaks.some(id => typeof id !== 'string' || !APP_ID.test(id))) fail('invalid Flatpak ID');
+      if (d.default_flatpaks.some(id => !validFlatpakId(id))) fail('invalid Flatpak ID');
       unique(d.default_flatpaks,'default_flatpaks');
     }
     for (const v of config.variants || []) { object(v,['id','name'],['id','name'],'variant'); identifier(v.id,'variant.id'); text(v.name,'variant.name'); }
@@ -124,7 +125,7 @@
     if(config.schema_version===2) return (config.selection.facets.find(f=>f.id==='base')?.values||[]).map(v=>({id:v.id,name:v.label,des:config.desktops.filter(d=>(snapshot.targets||[]).some(e=>e.target?.variant===v.id&&e.target?.flavor===d.id&&(e.scheduled||e.availability?.available))).map(d=>d.id)})).filter(v=>v.des.length);
     return config.variants.map(v=>({...v,des:config.desktops.filter(d=>(snapshot.targets||[]).some(e=>e.target?.variant===v.id&&e.target?.flavor===d.id&&(e.scheduled||e.availability?.available))).map(d=>d.id)})).filter(v=>v.des.length);
   }
-  const api={validate,variants};
+  const api={validate,variants,validFlatpakId};
   if (typeof module==='object'&&module.exports) module.exports=api;
   root.TboxBuilderConfig=api;
 })(globalThis);
