@@ -54,3 +54,7 @@ def test_shared_configuration_url_contract():
 
 def test_shared_selection_text_contract():
     subprocess.run(['node', '--test', 'tests/builder-config-selection-text.test.cjs'], cwd=ROOT, check=True)
+
+
+def test_shared_common_text_contract():
+    subprocess.run(['node', '--test', 'tests/builder-config-common-text.test.cjs'], cwd=ROOT, check=True)

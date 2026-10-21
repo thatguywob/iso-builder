@@ -18,8 +18,8 @@ test('selection whitespace class exactly mirrors producer',()=>{
  const source=require('node:fs').readFileSync(require('node:path').join(__dirname,'../app/public/builder-config.js'),'utf8');
  assert.ok(source.includes(JSON.stringify('[^'+fixture.python_whitespace_class+']')));
 });
-test('common text behavior is unchanged',()=>{
- for(const [value,valid] of [['\u0085',true],['\ufeff',false]]){const c=structuredClone(stock);c.brand.name=value;if(valid)assert.doesNotThrow(()=>validate(c));else assert.throws(()=>validate(c));}
+test('common text follows producer whitespace policy',()=>{
+ for(const [value,valid] of [['\u0085',false],['\ufeff',true]]){const c=structuredClone(stock);c.brand.name=value;if(valid)assert.doesNotThrow(()=>validate(c));else assert.throws(()=>validate(c));}
 });
 
 for(const [i,field] of fields.entries())for(const size of [2048,2049])test(`selection field ${i} Unicode codepoint boundary ${size}`,()=>{
