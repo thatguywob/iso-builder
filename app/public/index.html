@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TunaOS ISO Builder</title>
-<link rel="icon" type="image/png" href="favicon-32.png">
+<title>ISO Builder</title>
+<link rel="icon" type="image/png" href="data:,">
 <style>
   /* Palette and type shared with tunaos.org (src/css/custom.css and
      src/css/page.module.css there). The two sites sit behind one nav bar and
@@ -55,10 +55,10 @@
   .row { display: flex; gap: .75rem; flex-wrap: wrap; align-items: end; }
   .row > div { flex: 1 1 220px; }
 
-  button { padding: .6rem 1.2rem; border-radius: 6px; border: none; background: var(--accent); color: #1d1f21;
+  button { padding: .6rem 1.2rem; border-radius: 6px; border: none; background: var(--accent); color: var(--accent-ink, #1d1f21);
     font: inherit; font-weight: 700; font-size: .88rem; cursor: pointer;
     transition: background .18s ease, transform .18s ease; }
-  button:hover:not(:disabled) { background: var(--accent-soft); }
+  button:hover:not(:disabled) { filter: brightness(1.12); }
   button:disabled { opacity: .45; cursor: default; }
   button.secondary { background: var(--panel-2); color: var(--fg); }
   button.secondary:hover { background: var(--bg-2); }
@@ -126,78 +126,135 @@
   @media (prefers-reduced-motion: reduce) {
     button, .edition { transition: none; }
   }
+
+  /* Quiet defaults; technical configuration is disclosed only on request. */
+  body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width: 920px; }
+  h2 { margin: 0 0 .35rem; font-size: 1.25rem; letter-spacing: -.025em; }
+  .helper { color: var(--dim); font-size: .9rem; margin: .45rem 0 1rem; }
+  .optional { font-size: .75rem; font-weight: 400; color: var(--dim); margin-left: .5rem; }
+  .journey { display:flex; gap:1.5rem; list-style:none; padding:0 0 1rem; color:var(--accent-soft); font-size:.85rem; flex-wrap:wrap; }
+  .journey span { color:var(--dim); }
+  .card { padding:1.6rem; border-radius:14px; }
+  label { text-transform:none; letter-spacing:0; font-size:.9rem; }
+  input[type=text], input[type=search], .variant-select { min-height:44px; border:1px solid var(--border); }
+  input[type=search] { width:100%; padding:.6rem .75rem; border-radius:6px; background:var(--bg); color:var(--fg); font:inherit; }
+  summary { padding:.55rem 0; font-weight:600; }
+  details details { padding-left:.8rem; border-left:1px solid var(--border); }
+  .editions { grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:.7rem; }
+  .edition { min-height:110px; border:1px solid var(--border); border-radius:10px; padding:1rem; }
+  .edition.selected { border-color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent); }
+  .edition .desktop-description { font-size:.85rem; font-weight:400; color:var(--dim); }
+  .edition small { font-size:.75rem; letter-spacing:0; }
+  .next-action { margin-top:1.25rem; }
+  .next-action button { min-height:48px; }
+  .next-action .helper { margin:.5rem 0 0; }
+  .fplist, .fpresults { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:.65rem; margin:.75rem 0; }
+  .fplist .app-card, .fpresults .app-card { display:flex; align-items:flex-start; gap:.75rem; padding:1rem; border:1px solid var(--border); border-radius:10px; background:var(--bg); color:var(--fg); text-align:left; font-size:.9rem; font-weight:400; min-width:0; }
+  .app-card:has(input:checked), .fpresults .app-card[aria-pressed=true] { border-color:var(--accent); }
+  .app-card input { margin-top:.35rem; accent-color:var(--accent); width:18px; height:18px; flex-shrink:0; }
+  .app-icon { width:44px; height:44px; object-fit:contain; flex-shrink:0; }
+  .app-icon-fallback { display:grid; place-items:center; background:var(--panel); border-radius:10px; color:var(--dim); font-size:1.25rem; }
+  .app-copy { display:flex; flex-direction:column; gap:.25rem; min-width:0; overflow-wrap:anywhere; }
+  .app-copy strong { font-size:1rem; }
+  .app-copy small, .app-copy .app-summary { color:var(--dim); font-size:.8rem; }
+  .app-copy .app-state { color:var(--accent-soft); font-size:.8rem; }
+  #fpcount { font-size:.8rem; color:var(--dim); margin-left:.5rem; }
+  #fpstatus { min-height:1.5em; }
+  #facts { margin-top:1rem; }
+  @media(max-width:600px) {
+    main { padding-top:1.5rem; } .card { padding:1.1rem; }
+    .site-header .inner { flex-wrap:wrap; } .site-header nav { margin-left:0; }
+    .site-header nav a { font-size:.8rem; padding:.3rem; }
+    .journey { gap:.55rem; flex-direction:column; }
+    .editions, .fplist, .fpresults { grid-template-columns:1fr; }
+    .next-action button { width:100%; }
+    .row > div { min-width:0; } .variant-select { max-width:100%; }
+    .repohelp { flex-direction:column; } .repohelp input { min-width:0; }
+  }
 </style>
 </head>
 <body>
 <header class="site-header">
   <div class="inner">
-    <a class="brand" href="https://tunaos.org" style="display:flex;align-items:center;gap:.55rem">
-      <img src="logo.png" alt="TunaOS"> TunaOS
-    </a>
-    <nav>
-      <a href="https://tunaos.org/download">Download</a>
-      <a href="https://iso.tunaos.org" class="active">ISO Builder</a>
-      <a href="https://tunaos.org/wootc">From Windows</a>
-      <a href="https://tunaos.org/flatpak">Flatpaks</a>
-      <a href="https://tunaos.org/docs/iso-builder">Docs</a>
-      <a href="https://github.com/tuna-os">GitHub</a>
-    </nav>
+    <a class="brand" style="display:flex;align-items:center;gap:.55rem"></a>
+    <nav aria-label="Project links"></nav>
   </div>
 </header>
 <main>
   <span class="eyebrow">ISO builder</span>
-  <h1>Build a live ISO from a container image</h1>
-  <p class="sub">Any bootable container image, assembled in your browser. Same engine as CI
-     (<a href="https://github.com/tuna-os/tacklebox" target="_blank" rel="noopener">tacklebox</a>,
-     compiled to WebAssembly). Nothing is uploaded anywhere.</p>
+  <h1>Make your own image</h1>
+  <p id="builder-intro" class="sub"></p>
+  <p id="builder-disclaimer" class="note" hidden></p>
+  <ol class="journey" aria-label="Build steps"><li>1. Choose a desktop</li><li>2. Add apps <span>(optional)</span></li><li>3. Check &amp; build</li></ol>
 
-  <div class="card">
+  <section class="card" aria-labelledby="choose-heading">
+    <h2 id="choose-heading">Choose your desktop</h2>
+    <p id="desktop-help" class="helper">The desktop is how your computer looks and feels. Choose the layout you prefer. Your selection does not guarantee that a browser build is available.</p>
+    <details id="base-options"><summary>Change Linux base or computer type</summary>
     <div class="row" style="align-items:end">
       <div>
-        <label for="variant">Choose your TunaOS edition</label>
+        <label for="variant">Linux base</label>
         <select id="variant" class="variant-select"></select>
       </div>
       <div style="flex:0 0 220px">
-        <label for="platform">Target platform</label>
+        <label for="platform">Computer type</label>
         <select id="platform" class="variant-select" aria-label="Target platform">
-          <option value="linux/amd64/v2">linux/amd64/v2 (x86-64-v2)</option>
-          <option value="linux/amd64">linux/amd64 (x86-64)</option>
-          <option value="linux/arm64">linux/arm64 (aarch64)</option>
+          <option value="linux/amd64/v3">Intel / AMD (x86-64-v3)</option>
+          <option value="linux/amd64/v2">Intel / AMD (x86-64-v2)</option>
+          <option value="linux/amd64">Intel / AMD (x86-64)</option>
+          <option value="linux/arm64">ARM (aarch64)</option>
         </select>
       </div>
     </div>
-    <div class="editions" id="editions"></div>
-    <details>
-      <summary>Or build from any bootable container image</summary>
+    </details>
+    <p id="selection-summary" class="helper"></p>
+    <div class="editions" id="editions" role="group" aria-label="Desktop choices"></div>
+    <details id="custom-image-options">
+      <summary>Use a custom container image</summary>
       <div class="row" style="margin-top:.6rem">
         <div>
           <label for="image">Bootable container image</label>
-          <input type="text" id="image" placeholder="tuna-os/yellowfin:kde" spellcheck="false">
+          <input type="text" id="image" placeholder="registry.example.org/project/image:tag" spellcheck="false">
         </div>
-        <div style="flex:0 0 auto">
-          <button id="introspect">Inspect image</button>
-        </div>
+
       </div>
     </details>
     <div class="facts hidden" id="facts"></div>
-    <details>
-      <summary>Advanced — customize (flatpaks, packages, repos)</summary>
-      <label for="label" style="margin-top:.6rem">Volume label</label>
-      <input type="text" id="label" value="TUNAOS" spellcheck="false">
-      <label style="margin-top:.6rem">Flatpak preload list (embedded as <code>/LiveOS/flatpak-preload.json</code> for the live env)</label>
+  </section>
+  <section class="card" aria-labelledby="apps-heading">
+    <h2 id="apps-heading">Add your apps <span class="optional">Optional</span></h2>
+    <p class="helper">Choose optional apps from Flathub for the live environment. Apps are recorded in a preload list; availability depends on your computer type.</p>
+    <details id="apps-options"><summary>Choose apps <span id="fpcount">0 selected</span></summary>
+      <p id="fpempty" class="helper">No extra apps selected. Desktop defaults are added when you check the image.</p>
       <div id="fplist" class="fplist"></div>
-      <div style="display:flex;gap:.5rem;margin-top:.4rem;align-items:center">
-        <input type="text" id="fpsearch" placeholder="Search Flathub to add more apps…" spellcheck="false" autocomplete="off" style="flex:1">
-        <select id="curatedset" aria-label="Curated Flatpak set" style="width:auto"></select>
-        <button type="button" id="curated" class="secondary" style="white-space:nowrap">+ Add set</button>
-      </div>
+      <label for="fpsearch">Search Flathub</label>
+      <input type="search" id="fpsearch" placeholder="Find an app, like Firefox or GIMP" spellcheck="false" autocomplete="off" aria-describedby="fpstatus">
+      <p id="fpstatus" class="helper" role="status" aria-live="polite">Type at least 3 characters to search.</p>
       <div id="fpresults" class="fpresults"></div>
+      <details><summary>Add an app collection</summary>
+        <p class="helper">Collections are maintained by other Linux projects. Review the selected apps after adding one.</p>
+        <div class="row"><select id="curatedset" class="variant-select" aria-label="Curated Flatpak set"></select>
+        <button type="button" id="curated" class="secondary">Add collection</button></div>
+      </details>
+    </details>
+  </section>
+  <section class="card" aria-labelledby="review-heading">
+    <h2 id="review-heading">Check your image</h2>
+    <p class="helper">We’ll check whether this image can be built in your browser before starting a download.</p>
+    <details id="advanced-options"><summary>Advanced settings</summary>
+      <p class="helper">The defaults work for most people. Only change these if you need a specific system setup.</p>
+      <label for="label">USB image name</label>
+      <input type="text" id="label" value="" spellcheck="false">
+      <details><summary>Add system packages</summary>
       <label style="margin-top:1rem">System packages (layered on the installed system via <a href="https://github.com/tuna-os/remora" target="_blank" rel="noopener">remora</a> — persists across updates)</label>
       <div id="pkglist" class="fplist"></div>
+      <label for="pkgsearch">Search system packages</label>
       <input type="text" id="pkgsearch" placeholder="Search packages for this image's distro…" spellcheck="false" autocomplete="off" style="margin-top:.4rem">
       <div id="pkgresults" class="fpresults"></div>
 
-      <label style="margin-top:1rem">Custom repositories &amp; setup (advanced)</label>
+      </details>
+      <details><summary>Add a repository or setup command</summary>
       <div class="repohelp">
         <select id="repokind" aria-label="Repository type">
           <option value="copr">Fedora COPR</option>
@@ -205,30 +262,37 @@
           <option value="obs">openSUSE OBS</option>
           <option value="raw">Raw command</option>
         </select>
+        <label for="reporef">Repository or command</label>
         <input type="text" id="reporef" placeholder="e.g. atim/starship" spellcheck="false">
         <button type="button" id="addrepo" class="secondary">Add</button>
       </div>
       <div id="repolist" class="fplist"></div>
 
+      </details>
+      <details><summary>Override boot files or registry connection</summary>
       <label for="initrdurl" style="margin-top:1rem">tbox initramfs URL (optional override — by default the builder appends the tbox live modules to the image's own initramfs automatically)</label>
       <input type="text" id="initrdurl" placeholder="https://…/initramfs-tbox.img" spellcheck="false">
 
       <label for="shimurl" style="margin-top:1rem">Registry relay URL (CORS shim)</label>
       <input type="text" id="shimurl" placeholder="https://relay.tunaos.org" spellcheck="false">
 
+      </details>
+      <details><summary>Manage downloaded files</summary>
       <label style="margin-top:1rem">Downloaded layers (kept in browser storage so the next build of an image downloads nothing it already has)</label>
       <div class="row" style="align-items:center">
         <span id="cachestat" style="flex:1">—</span>
         <button type="button" id="clearcache" class="secondary">Clear downloaded layers</button>
       </div>
+      </details>
     </details>
-  </div>
+    <div class="next-action"><button id="introspect">Check image &amp; continue</button><p id="preview-note" class="helper">No ISO download starts yet.</p></div>
+  </section>
 
   <div class="card hidden" id="buildcard">
     <div class="row">
       <div>
-        <div id="stage" style="font-weight:600">Ready.</div>
-        <progress id="bar" max="1" value="0"></progress>
+        <div id="stage" tabindex="-1" role="status" aria-live="polite" style="font-weight:600">Ready.</div>
+        <progress aria-label="Image build progress" id="bar" max="1" value="0"></progress>
       </div>
       <div style="flex:0 0 auto">
         <button id="build" disabled>Build ISO</button>
@@ -236,7 +300,7 @@
     </div>
     <div class="note hidden" id="browsernote"></div>
     <div class="note hidden" id="initrdnote"></div>
-    <div id="log"></div>
+    <details><summary>Technical details</summary><div id="log"></div></details>
   </div>
   <div class="card hidden" id="fallbackcard">
     <h3 style="margin-top:0">Build locally with tacklebox</h3>
@@ -255,7 +319,7 @@
 
   <div class="card hidden" id="postcard">
     <h3 style="margin-top:0">ISO build complete</h3>
-    <p class="sub" style="margin-top:-.4rem;margin-bottom:1rem">Your custom TunaOS ISO is ready. Now you need to write it to a USB drive to make it bootable.</p>
+    <p class="sub" style="margin-top:-.4rem;margin-bottom:1rem">Your custom ISO is ready. Now you need to write it to a USB drive to make it bootable.</p>
     
     <div class="tabs">
       <button class="tab-btn active" onclick="switchTab(event, 'etcher')">BalenaEtcher</button>
@@ -268,7 +332,7 @@
       <ol style="padding-left:1.2rem;margin:0">
         <li>Download and install <a href="https://etcher.balena.io/" target="_blank" rel="noopener">BalenaEtcher</a> (supports Windows, macOS, and Linux).</li>
         <li>Plug in your USB flash drive (minimum 4GB).</li>
-        <li>Open Etcher, click <b>Flash from file</b> and select your downloaded TunaOS ISO.</li>
+        <li>Open Etcher, click <b>Flash from file</b> and select your downloaded ISO.</li>
         <li>Select your USB target and click <b>Flash!</b>.</li>
       </ol>
     </div>
@@ -277,7 +341,7 @@
       <ol style="padding-left:1.2rem;margin:0">
         <li>Install <a href="https://www.ventoy.net/" target="_blank" rel="noopener">Ventoy</a> onto your USB flash drive (non-destructive; you only do this once).</li>
         <li>Once Ventoy is installed, your USB drive will show up as a normal partition named <code>Ventoy</code>.</li>
-        <li>Simply <b>drag and drop</b> your downloaded TunaOS ISO file directly onto the USB partition.</li>
+        <li>Simply <b>drag and drop</b> your downloaded ISO file directly onto the USB partition.</li>
         <li>Reboot your PC, boot from the USB drive, and choose the ISO from the Ventoy menu.</li>
       </ol>
     </div>
@@ -286,7 +350,7 @@
       <ol style="padding-left:1.2rem;margin:0">
         <li>Download and open <a href="https://rufus.ie/" target="_blank" rel="noopener">Rufus</a> (Windows only).</li>
         <li>Select your USB drive under <b>Device</b>.</li>
-        <li>Click <b>SELECT</b> and choose your downloaded TunaOS ISO.</li>
+        <li>Click <b>SELECT</b> and choose your downloaded ISO.</li>
         <li>Keep default settings (GPT, UEFI) and click <b>START</b>.</li>
         <li>If prompted for write mode, select <b>Write in ISO Image mode</b>.</li>
       </ol>
@@ -297,21 +361,23 @@
       <ol style="padding-left:1.2rem;margin:0">
         <li>Identify your USB drive name (e.g. <code>/dev/sdX</code> on Linux, <code>/dev/diskN</code> on macOS).</li>
         <li>Run the following command in your terminal:
-          <pre style="padding:.6rem;overflow-x:auto;margin:.4rem 0;font:12px var(--mono)"><code>sudo dd if=path/to/tunaos.iso of=/dev/sdX bs=4M status=progress oflag=sync</code></pre>
+          <pre style="padding:.6rem;overflow-x:auto;margin:.4rem 0;font:12px var(--mono)"><code>sudo dd if=path/to/image.iso of=/dev/sdX bs=4M status=progress oflag=sync</code></pre>
         </li>
         <li>Wait for the write command to complete and safely eject the drive.</li>
       </ol>
     </div>
   </div>
 
-  <p class="sub" style="margin-top:1rem">Share a preset:
+  <details class="share-options"><summary>Share this setup</summary><p class="sub" style="margin-top:1rem">Share a preset:
     <a id="sharelink" href="#" style="word-break:break-all"><code id="share">?image=…</code></a>
     <button id="copyshare" class="secondary" style="padding:.2rem .6rem;font-size:.8rem;margin-left:.4rem">Copy</button>
-  </p>
+  </p></details>
 </main>
 <script src="wasm_exec.js"></script>
 <script src="layercache.js"></script>
 <script src="build-result.js"></script>
+<script src="builder-config.js"></script>
+<script src="builder-config-data.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

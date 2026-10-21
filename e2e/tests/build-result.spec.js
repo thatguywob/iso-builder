@@ -84,7 +84,7 @@ async function readyPage(page, { autodl = false } = {}) {
   await page.route("https://**/*", route => route.abort());
   await qualifiedCatalogFixture(page);
   await page.goto(`/?variant=sailfin&flavor=xfce&platform=linux%2Famd64${autodl ? "&autodl=1" : ""}`);
-  await page.getByText("Or build from any bootable container image").click();
+  await page.getByText("Use a custom container image").click();
   await page.locator("#introspect").click();
   await expect(page.locator("#build")).toBeEnabled();
   await page.evaluate(fixture => {
@@ -197,7 +197,10 @@ test.describe("browser result lifecycle", () => {
   for (const id of ["image", "platform", "label", "initrdurl", "shimurl"]) {
     test(`${id} edit clears a completed result`, async ({ page }) => {
       await readyPage(page); await success(page);
-      if (id === "platform") await page.locator("#platform").selectOption("linux/arm64");
+      if (id === "platform") {
+        await page.locator("#base-options > summary").click();
+        await page.locator("#platform").selectOption("linux/arm64");
+      }
       else await page.locator(`#${id}`).evaluate((el, id) => {
         el.value = id === "image" ? "bonito:kde" : "changed";
         el.dispatchEvent(new Event("input", { bubbles: true }));
@@ -208,7 +211,7 @@ test.describe("browser result lifecycle", () => {
   }
   test("changed options during sink close cannot republish an obsolete result", async ({ page }) => {
     await readyPage(page);
-    await page.getByText("Advanced — customize (flatpaks, packages, repos)", { exact: true }).click();
+    await page.getByText("Advanced settings", { exact: true }).click();
     await page.evaluate(() => { window.__pauseClose = true; });
     await page.locator("#build").click();
     await page.waitForFunction(() => window.__resumeClose);

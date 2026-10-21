@@ -28,8 +28,10 @@ test.describe("engine OOM guard", () => {
   });
 
   test("reports out of memory when the heap parks at the ceiling and offers target-preserving local fallback", async ({ page }) => {
+    await page.locator("#base-options > summary").click();
     await page.locator("#variant").selectOption("bonito");
     await page.locator('#editions .edition[data-de="kde"]').click();
+    await page.locator("#introspect").click();
     await expect(page.locator("#build")).toBeEnabled();
     const selectedRequest = await page.evaluate(() => window.tboxGetBuildRequest());
 
@@ -66,6 +68,7 @@ test.describe("engine OOM guard", () => {
 
   test("blocks browser build when storage quota is below prerequisite and preserves BuildRequest v1 in fallback", async ({ page }) => {
     await page.locator('#editions .edition[data-de="gnome"]').click();
+    await page.locator("#introspect").click();
     await expect(page.locator("#build")).toBeEnabled();
     const selectedRequest = await page.evaluate(() => window.tboxGetBuildRequest());
     await page.evaluate(() => {
@@ -74,7 +77,7 @@ test.describe("engine OOM guard", () => {
       });
     });
 
-    await page.getByText("Or build from any bootable container image").click();
+    await page.getByText("Use a custom container image").click();
     await page.locator("#introspect").click();
 
     await expect(page.locator("#build")).toBeDisabled();

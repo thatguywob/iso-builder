@@ -166,6 +166,17 @@ def snapshot_refs(snapshot_path: Path | None = None) -> list[tuple[str, str]]:
 def picker_refs() -> list[tuple[str, str]]:
     """(ref, source) for every ghcr.io/tuna-os/<variant>:<desktop> in app.js."""
     src = APP_JS.read_text()
+    if APP_JS == DEFAULT_APP_JS and "TboxBuilderConfig.variants" in src:
+        # Presentation order is a generated deployment config, while the snapshot
+        # is still the authority for offered target cells and qualification.
+        config_path = APP_JS.with_name("builder-config.json")
+        config = json.loads(config_path.read_text())
+        variants = {v["id"] for v in config["variants"]}
+        desktops = {d["id"] for d in config["desktops"]}
+        refs = snapshot_refs(CATALOG_SNAPSHOT)
+        return [(ref, "builder-config.json + catalog-snapshot.json") for ref, _ in refs
+                if ref.rsplit("/", 1)[-1].split(":", 1)[0] in variants
+                and ref.rsplit(":", 1)[-1] in desktops]
     block = VARIANTS_BLOCK.search(src)
     if not block:
         sys.exit(

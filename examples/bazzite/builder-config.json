@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "preview_only": true,
+  "brand": {
+    "name": "Bazzite",
+    "homepage_url": "https://bazzite.gg/",
+    "documentation_url": "https://docs.bazzite.gg/",
+    "disclaimer": "Unofficial Bazzite configuration demo. Not affiliated with or endorsed by Bazzite. Preview only; browser ISO creation and installation support are not qualified."
+  },
+  "presentation": {
+    "headline": "Explore a Bazzite image configuration",
+    "intro": "One shared ISO Builder, configured for a different project. Review the example image and defaults; use the official project for installation guidance.",
+    "accent_color": "#8b5cf6"
+  },
+  "output": {
+    "volume_label": "BAZZITE_DEMO",
+    "filename_prefix": "bazzite-demo"
+  },
+  "desktops": [
+    {
+      "id": "kde",
+      "name": "KDE Plasma",
+      "description": "Example desktop metadata; not a hardware or installation qualification.",
+      "default_flatpaks": []
+    }
+  ],
+  "variants": [],
+  "default_selection": {
+    "kind": "image",
+    "image": "ghcr.io/ublue-os/bazzite:stable",
+    "platform": "linux/amd64"
+  },
+  "curated_app_sets": []
+}

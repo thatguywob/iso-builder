@@ -200,6 +200,7 @@ test.describe("layer cache", () => {
     await resolveManifest(page);
     await expect(page.locator("#log")).toContainText(`all ${LAYERS.length} layers on disk`);
     await page.locator("summary", { hasText: "Advanced" }).click();
+    await page.getByText("Manage downloaded files", { exact: true }).click();
     await page.evaluate(() => showCacheSize()); // inspect() does this after a pull
     await expect(page.locator("#cachestat")).toContainText(`${LAYERS.length} layers`);
     await page.locator("#clearcache").click();

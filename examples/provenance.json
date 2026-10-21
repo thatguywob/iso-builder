@@ -1,0 +1,85 @@
+{
+  "checked_at": "2026-10-20",
+  "scope": "Documentation/source verification only; no registry manifest or installation qualification.",
+  "projects": {
+    "bluefin": {
+      "homepage": "https://projectbluefin.io/",
+      "documentation": "https://docs.projectbluefin.io/",
+      "sources": [
+        {
+          "url": "https://docs.projectbluefin.io/images/",
+          "supports": [
+            "Bluefin image reference ghcr.io/projectbluefin/dakota:stable",
+            "Bluefin Classic is separate and uses ghcr.io/ublue-os/bluefin:stable"
+          ]
+        },
+        {
+          "url": "https://raw.githubusercontent.com/projectbluefin/dakota/testing/project.conf",
+          "supports": [
+            "BuildStream source lists x86_64 and aarch64 options",
+            "Source maps x86_64 to Go amd64; this is not registry platform verification"
+          ]
+        },
+        {
+          "url": "https://github.com/projectbluefin/dakota",
+          "supports": [
+            "Project identity and stream documentation",
+            "README notes installation and upgrade gaps"
+          ]
+        },
+        {
+          "url": "https://docs.projectbluefin.io/press-kit/",
+          "supports": [
+            "Project naming guidance",
+            "Brand accent #4285f4",
+            "Artwork must not be distorted or modified"
+          ]
+        }
+      ],
+      "assets": {
+        "mode": "text-only",
+        "redistributed": [],
+        "license_claim": null
+      }
+    },
+    "bazzite": {
+      "homepage": "https://bazzite.gg/",
+      "documentation": "https://docs.bazzite.gg/",
+      "sources": [
+        {
+          "url": "https://github.com/ublue-os/bazzite",
+          "supports": [
+            "ghcr.io/ublue-os/bazzite:stable desktop reference",
+            "ghcr.io/ublue-os/bazzite-deck:stable Deck reference"
+          ]
+        },
+        {
+          "url": "https://docs.bazzite.gg/General/FAQ/",
+          "supports": [
+            "bazzite desktop uses KDE Plasma and AMD/Intel GPUs",
+            "Image variants are explicit combinations, not arbitrary cross-products"
+          ]
+        },
+        {
+          "url": "https://docs.bazzite.gg/Gaming/Hardware_compatibility_for_gaming/",
+          "supports": [
+            "Minimum CPU architecture x86-64"
+          ]
+        },
+        {
+          "url": "https://raw.githubusercontent.com/ublue-os/bazzite/main/press_kit/README.md",
+          "supports": [
+            "Project naming guidance",
+            "Artwork must not be distorted or modified"
+          ]
+        }
+      ],
+      "assets": {
+        "mode": "text-only",
+        "redistributed": [],
+        "license_claim": null
+      },
+      "accent_note": "#8b5cf6 is an example design choice, not an official brand-color assertion"
+    }
+  }
+}
