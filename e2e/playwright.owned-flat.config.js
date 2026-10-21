@@ -4,7 +4,8 @@ const { defineConfig } = require("@playwright/test");
 
 module.exports = defineConfig({
   testDir: "./tests",
-  testMatch: ["owned-flat-cdp.spec.js", "owned-flat-websocket.spec.js", "owned-flat-body-reservations.spec.js"],
+  testMatch: ["owned-flat-cdp.spec.js", "owned-flat-websocket.spec.js", "owned-flat-body-reservations.spec.js",
+    "owned-flat-frontend-state.spec.js", "owned-flat-launcher-profile.spec.js", "owned-flat-frontend-controller.spec.js", "owned-flat-layer-fixture.spec.js"],
   timeout: 40_000,
   globalTimeout: 120_000,
   retries: 0,

@@ -7,7 +7,7 @@ const os = require("node:os");
 const { spawn } = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const { BodyReservations, METHODS: BODY_METHODS } = require("./owned-flat-body-reservations");
-const { SOCKET_LIMITS } = require("./owned-flat-websocket");
+const { SOCKET_LIMITS, connectOwnedSocket } = require("./owned-flat-websocket");
 
 const LIMITS = Object.freeze({ commandMs: 3000, launchMs: 10000, frameBytes: 256 * 1024, pending: 32 });
 function problem(code) { return new Error(`owned-cdp:${code}`); }
@@ -303,12 +303,26 @@ function attachPrerequisites(error, observations, stderr, truncated) {
   return safe;
 }
 
-async function launchOwnedChromium() {
+// Always attempt process cleanup even if this channel barrier rejects.
+async function closeOwnedChannels(connection, socket, boundedBodies = false) {
+  const priorFailure = !!(connection?.failure || socket?.failure);
+  let closeFailed = false;
+  try { connection?.close(); } catch { closeFailed = true; }
+  try {
+    if (boundedBodies && socket) {
+      if (typeof socket.dispose !== "function") throw problem("bounded-channel-missing");
+      await socket.dispose();
+    } else socket?.close();
+  } catch { closeFailed = true; }
+  if (boundedBodies && (priorFailure || socket?.failure || closeFailed)) throw problem("channel-cleanup-failed");
+}
+async function launchOwnedChromium({ boundedBodies = false } = {}) {
   let pin, profile, child, identity, connection, socket, endpoint, exited, stderr = "", stderrTruncated = false, prerequisites, stopping = false, cleanupPromise;
   const cleanup = () => cleanupPromise ||= (async () => {
     stopping = true;
-    connection?.close();
-    try { socket?.close(); } catch { /* Process teardown still follows. */ }
+    let channelFailure;
+    try { await closeOwnedChannels(connection, socket, boundedBodies); }
+    catch (error) { channelFailure = error; }
     try {
       await cleanupOwnedProcess({ child, identity, executable: pin?.executable, exited, endpoint }, {
         snapshot: (pid, executable) => deadline(processSnapshot(pid, executable), 1000, "cleanup-identity-timeout"),
@@ -318,10 +332,12 @@ async function launchOwnedChromium() {
         groupPresent: pid => { try { process.kill(-pid, 0); return true; } catch (error) { if (error.code === "ESRCH") return false; throw problem("cleanup-group-unverified"); } },
       });
       if (profile) await deadline(fs.rm(profile, { recursive: true, force: true }), 1500, "cleanup-profile-timeout");
+      if (channelFailure) throw channelFailure;
     } catch (error) { throw safeError(error, "cleanup-failed"); }
   })();
   try {
-    if (process.platform !== "linux" || typeof globalThis.WebSocket !== "function") throw problem("unsupported-host");
+    if (typeof boundedBodies !== "boolean") throw problem("body-profile-invalid");
+    if (process.platform !== "linux" || (!boundedBodies && typeof globalThis.WebSocket !== "function")) throw problem("unsupported-host");
     pin = await readLaunchPin();
     prerequisites = await collectLaunchPrerequisites(pin.executable);
     profile = await fs.mkdtemp(path.join(os.tmpdir(), "iso-owned-cdp-"));
@@ -355,17 +371,22 @@ async function launchOwnedChromium() {
       }
       if (stopping) throw problem("launch-stopped");
     })(), LIMITS.launchMs, "endpoint-timeout");
-    socket = new WebSocket(endpoint.url);
-    await deadline(new Promise((resolve, reject) => {
-      socket.addEventListener("open", resolve, { once: true });
-      socket.addEventListener("error", () => reject(problem("websocket-connect-failed")), { once: true });
-    }), 3000, "websocket-connect-timeout");
+    if (boundedBodies) {
+      socket = connectOwnedSocket(endpoint, { maxPayload: SOCKET_LIMITS.messageBytes });
+      await deadline(socket.ready, 3000, "websocket-connect-timeout");
+    } else {
+      socket = new WebSocket(endpoint.url);
+      await deadline(new Promise((resolve, reject) => {
+        socket.addEventListener("open", resolve, { once: true });
+        socket.addEventListener("error", () => reject(problem("websocket-connect-failed")), { once: true });
+      }), 3000, "websocket-connect-timeout");
+    }
     const verify = async () => {
       const current = await deadline(verifyEndpoint(profile, child, identity, pin.executable), 1500, "endpoint-recheck-timeout");
       if (socket.url !== endpoint.url || current.url !== endpoint.url || current.inode !== endpoint.inode) throw problem("endpoint-association-changed");
     };
     await verify();
-    connection = new FlatConnection(socket);
+    connection = new FlatConnection(socket, { bodyReservations: boundedBodies ? new BodyReservations() : null });
     const version = await connection.send("Browser.getVersion");
     if (version.product !== `Chrome/${pin.browserVersion}` && version.product !== `HeadlessChrome/${pin.browserVersion}`) {
       throw problem("observed-browser-pin-mismatch");
@@ -382,4 +403,4 @@ function safeError(error, fallback) {
 }
 module.exports = { FlatConnection, launchOwnedChromium, parseActivePort, processIdentity, inspectEndpointRecords,
   launchArguments, readLaunchPin, deadline, problem, LIMITS, cleanupOwnedProcess, readSmall, stderrCategory, numericObservation, helperObservation,
-  collectLaunchPrerequisites, prerequisiteDiagnosticsFor, attachPrerequisites };
+  collectLaunchPrerequisites, prerequisiteDiagnosticsFor, attachPrerequisites, closeOwnedChannels };

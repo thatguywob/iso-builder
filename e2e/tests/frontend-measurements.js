@@ -739,4 +739,4 @@ function compareFrontendAssets(observation, expectedAssets) {
   };
 }
 
-module.exports = { observeFrontendResponses, compareFrontendAssets, createFrontendResponseState };
+module.exports = { observeFrontendResponses, compareFrontendAssets, createFrontendResponseState, frontendKind };
