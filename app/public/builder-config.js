@@ -5,6 +5,7 @@
   const ID = /^[a-z0-9][a-z0-9-]*$/;
   const APP_ID = /^(?:[A-Za-z_][A-Za-z0-9_]*\.){2,}[A-Za-z_-][A-Za-z0-9_-]*$/;
   function validFlatpakId(id) { return typeof id === "string" && id.length <= 255 && APP_ID.exec(id)?.[0] === id; }
+  const HTTPS_URL = new RegExp("^(?![\\s\\S]*[\\x00-\\x20\\x7f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff\\\\])https://(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(?:\\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}|(?=[^/?#:]{1,253}(?::443)?(?:[/?#]|$))(?!(?:[^./?#:]+\\.)*(?:[0-9]+|0[xX][0-9A-Fa-f]+)\\.?(?::443)?(?:[/?#]|$))[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\\.?)(?::443)?(?:[/?#][^\\x00-\\x20\\x7f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff\\\\]*)?(?![\\s\\S])");
   const PLATFORMS = ['linux/amd64', 'linux/amd64/v2', 'linux/amd64/v3', 'linux/arm64'];
   function fail(message) { throw new Error(`Builder configuration: ${message}`); }
   function object(value, allowed, required, where) {
@@ -20,7 +21,7 @@
     if (/[\\\s]/.test(value)) fail(`${where} must not contain whitespace or backslashes`);
     if (asset && /^\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(value)) return;
     let parsed; try { parsed = new URL(value); } catch { fail(`${where} must be HTTPS`); }
-    if (!/^https:\/\/[^\s/@\\:]+(?::443)?(?:[/?#][^\s\\]*)?$/.test(value) || parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.port) fail(`${where} must be HTTPS without credentials or custom port`);
+    if (!HTTPS_URL.test(value) || parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.port) fail(`${where} must be HTTPS without credentials or custom port`);
   }
   function list(value, where) { if (!Array.isArray(value)) fail(`${where} must be an array`); }
   function unique(items, where) { if (new Set(items).size !== items.length) fail(`${where} has duplicate entries`); }
