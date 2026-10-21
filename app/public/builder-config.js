@@ -13,8 +13,9 @@
     for (const key of Object.keys(value)) if (!allowed.includes(key)) fail(`${where}.${key} is unknown`);
     for (const key of required) if (!(key in value)) fail(`${where}.${key} is required`);
   }
+  const TEXT_NONSPACE = new RegExp("[^\\u0009-\\u000d\\u001c-\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]");
   function text(value, where) {
-    if (typeof value !== 'string' || !value.trim() || /[\x00-\x1f\x7f]/.test(value)) fail(`${where} must be nonempty text`);
+    if (typeof value !== 'string' || !TEXT_NONSPACE.test(value) || /[\x00-\x1f\x7f]/.test(value)) fail(`${where} must be nonempty text`);
   }
   function url(value, where, asset = false) {
     text(value, where);
@@ -99,8 +100,7 @@
     }
     return freeze(config);
   }
-  const SELECTION_NONSPACE = new RegExp("[^\\u0009-\\u000d\\u001c-\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]");
-  function selectionText(value,where){if(typeof value!=='string'||!SELECTION_NONSPACE.test(value)||/[\x00-\x1f\x7f]/.test(value))fail(`${where} must be nonempty text`);let length=0;for(const character of value){if(++length>2048||character==='<'||character==='>')fail(`${where} must be bounded plain text`);}}
+  function selectionText(value,where){if(typeof value!=='string'||!TEXT_NONSPACE.test(value)||/[\x00-\x1f\x7f]/.test(value))fail(`${where} must be nonempty text`);let length=0;for(const character of value){if(++length>2048||character==='<'||character==='>')fail(`${where} must be bounded plain text`);}}
   function selectionId(value,where){identifier(value,where);if(value.length>64)fail(`${where} is too long`);}
   function leafId(value,where){if(typeof value!=='string'||!/^[a-z0-9][a-z0-9._:/-]{0,191}$/.test(value))fail(`${where} is not a leaf ID`);}
   const FACETS=['family','base','desktop','hardware','platform','graphics','edition','gaming_mode','channel','graphics_generation'];
