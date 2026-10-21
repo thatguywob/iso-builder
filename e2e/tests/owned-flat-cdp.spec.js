@@ -9,7 +9,8 @@ const os = require("node:os");
 const path = require("node:path");
 const http = require("node:http");
 const { FlatConnection, launchOwnedChromium, parseActivePort, processIdentity, inspectEndpointRecords,
-  launchArguments, cleanupOwnedProcess, readSmall, deadline, problem, LIMITS } = require("./owned-flat-cdp");
+  launchArguments, cleanupOwnedProcess, readSmall, deadline, problem, LIMITS, stderrCategory, numericObservation, helperObservation,
+  collectLaunchPrerequisites, prerequisiteDiagnosticsFor, attachPrerequisites } = require("./owned-flat-cdp");
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const PORT = "42123\n/devtools/browser/12345678-abcd-abcd-abcd-123456789abc";
@@ -435,11 +436,83 @@ test("cleanup permits bounded normal group reaping without signaling an exited l
   expect(pauses).toBe(2);
 });
 
+test.describe("read-only launch prerequisite diagnostics", () => {
+  const secret = "https://private.invalid/?token=secret /secret/path authorization=secret";
+  for (const [text, category] of [
+    ["Running as root without --no-sandbox is not supported", "root-refusal"],
+    ["No usable sandbox!", "no-usable-sandbox"],
+    ["Failed to move to new namespace: errno = Operation not permitted", "namespace-denied"],
+    ["The SUID sandbox helper binary was found, but is not configured correctly", "helper-configuration"],
+    ["an unrelated error", "unknown"],
+  ]) {
+    test(`returns only the fixed ${category} stderr category`, () => {
+      expect(stderrCategory(`${secret} ${text} ${secret}`)).toBe(category);
+      expect(stderrCategory("x".repeat(4096) + text)).toBe("unknown");
+    });
+  }
+  for (const text of ["", "-1", "2", "1 token", "01", "1\nextra", "4294967296", secret, null]) {
+    test(`malformed bounded setting ${JSON.stringify(text)}`, () => {
+      expect(numericObservation(text, 1)).toEqual({ status: "invalid", value: null });
+    });
+  }
+  test("accepts only bounded numeric settings without inventing missing values", () => {
+    expect(numericObservation("0\n", 1)).toEqual({ status: "observed", value: 0 });
+    expect(numericObservation("1", 1)).toEqual({ status: "observed", value: 1 });
+    expect(numericObservation("4294967295")).toEqual({ status: "observed", value: 4294967295 });
+  });
+  test("collects fixed sibling metadata and never reads an override value", async () => {
+    const names = [], env = {}; Object.defineProperty(env, "CHROME_DEVEL_SANDBOX", { get() { throw new Error("value must not be read"); } });
+    const observations = await collectLaunchPrerequisites({ realpath: "/installed/chrome" }, {
+      effectiveUid: () => 1001, overridePresent: () => Object.hasOwn(env, "CHROME_DEVEL_SANDBOX"),
+      read: async name => name.endsWith("max_user_namespaces") ? "65536\n" : "1\n",
+      lstat: async name => { names.push(name); return { uid: 0, gid: 0, mode: 0o104755, isFile: () => true, isSymbolicLink: () => false }; },
+    });
+    expect(names.sort()).toEqual(["/installed/chrome-sandbox", "/installed/chrome_sandbox"]);
+    expect(observations.underscoreHelper).toEqual({ status: "observed", kind: "regular-file", uid: 0, gid: 0, mode: 0o4755 });
+    expect(observations.chromeDevelSandboxPresent).toBe(true); expect(observations.chromeDevelSandboxInherited).toBe(false);
+    expect(Object.isFrozen(observations) && Object.isFrozen(observations.effectiveUid) && Object.isFrozen(observations.underscoreHelper)).toBe(true);
+    expect(JSON.stringify(observations)).not.toContain("/installed");
+  });
+  test("absent, unreadable and timed-out inputs stay unavailable without raw errors", async () => {
+    const observations = await collectLaunchPrerequisites({ realpath: "/secret/chrome" }, {
+      effectiveUid: () => { throw new Error(secret); }, overridePresent: () => { throw new Error(secret); },
+      read: async () => { throw new Error(secret); }, lstat: () => new Promise(() => {}), timeoutMs: 5,
+    });
+    expect(observations.effectiveUid.status).toBe("unavailable"); expect(observations.unprivilegedUsernsClone.status).toBe("unavailable");
+    expect(observations.chromeDevelSandboxPresent).toBe(null); expect(observations.underscoreHelper.status).toBe("unavailable");
+    expect(JSON.stringify(observations)).not.toMatch(/secret|private|token|\/secret/);
+  });
+  test("missing fixed sibling helpers are distinguished from unreadable metadata", async () => {
+    const observations = await collectLaunchPrerequisites({ realpath: "/installed/chrome" }, {
+      effectiveUid: () => 1001, overridePresent: () => false, read: async () => "1",
+      lstat: async () => { throw Object.assign(new Error(secret), { code: "ENOENT" }); },
+    });
+    expect(observations.hyphenHelper.status).toBe("absent");
+    expect(observations.chromeDevelSandboxPresent).toBe(false);
+    expect(JSON.stringify(observations)).not.toContain(secret);
+  });
+  test("malformed helper metadata and symlinks are never followed or called usable", () => {
+    expect(helperObservation({ uid: "root", gid: 0, mode: 0o4755 }).status).toBe("invalid");
+    expect(helperObservation({ uid: 1001, gid: 1001, mode: 0o120777, isFile: () => false, isSymbolicLink: () => true }).kind).toBe("symlink");
+    expect(helperObservation(null).status).toBe("unavailable");
+  });
+  test("sanitized launch failure retains only frozen diagnostics", async () => {
+    const observations = await collectLaunchPrerequisites(undefined, { effectiveUid: () => 0, overridePresent: () => false, read: async () => "0" });
+    const error = attachPrerequisites(new Error(secret), observations, `No usable sandbox! ${secret}`, true);
+    expect(error.message).toBe("owned-cdp:launch-failed"); expect(error.stack).not.toContain(secret);
+    expect(prerequisiteDiagnosticsFor(error).stderrCategory).toBe("no-usable-sandbox");
+    expect(prerequisiteDiagnosticsFor(error).stderrCaptureTruncated).toBe(true);
+    expect(Object.isFrozen(prerequisiteDiagnosticsFor(error))).toBe(true);
+    expect(prerequisiteDiagnosticsFor(new Error(secret))).toBe(null);
+    expect(JSON.stringify(prerequisiteDiagnosticsFor(error))).not.toMatch(/secret|private|token/);
+  });
+});
+
 test("owned flattened CDP real Chromium startup capability probe", async () => {
   test.setTimeout(40000);
-  let owned, server; const counts = {}, facts = newFacts();
+  let owned, server; const counts = {}, facts = newFacts(); let prerequisites = null;
   try {
-    owned = await launchOwnedChromium();
+    owned = await launchOwnedChromium(); prerequisites = owned.prerequisites;
     server = http.createServer((request, response) => {
       const name = request.url; counts[name] = (counts[name] || 0) + 1;
       if (request.method !== "GET" || counts[name] > 1) { response.writeHead(409); response.end(); return; }
@@ -455,6 +528,7 @@ test("owned flattened CDP real Chromium startup capability probe", async () => {
     await owned.verify(); facts.endpointReverified = true; facts.stage = "endpoint-reverified";
     expect(facts.capability).toBe("classic-bootstrap-second-gate-observed");
   } catch (error) {
+    prerequisites ||= prerequisiteDiagnosticsFor(error);
     facts.errorCode = /^owned-cdp:[a-z-]+$/.test(error?.message || "") ? error.message : "owned-cdp:probe-failed";
     throw problem(facts.errorCode.slice(10));
   } finally {
@@ -466,7 +540,7 @@ test("owned flattened CDP real Chromium startup capability probe", async () => {
     }
     if (failure) facts.errorCode = /^owned-cdp:[a-z-]+$/.test(failure.message || "") ? failure.message : "owned-cdp:cleanup-failed";
     facts.probeSucceeded = facts.capability === "classic-bootstrap-second-gate-observed" && facts.endpointReverified && facts.cleanupVerified && !facts.errorCode;
-    console.log(`OWNED_FLAT_CDP_PROBE ${JSON.stringify({ ...facts, browserVersion: owned?.pin.browserVersion || null, playwrightVersion: owned?.pin.playwrightVersion || null })}`);
+    console.log(`OWNED_FLAT_CDP_PROBE ${JSON.stringify({ ...facts, prerequisites, browserVersion: owned?.pin.browserVersion || null, playwrightVersion: owned?.pin.playwrightVersion || null })}`);
     if (failure) throw problem(facts.errorCode.slice(10));
   }
 });

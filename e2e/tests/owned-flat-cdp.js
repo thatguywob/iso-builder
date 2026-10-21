@@ -215,8 +215,72 @@ async function listenerPresent(inode) {
   }
   return false;
 }
+// Diagnostic observations only: these patterns are not a definitive host-cause
+// diagnosis. Never return stderr, paths, environment values, or raw exceptions.
+const diagnosticErrors = new WeakMap();
+function prerequisiteDiagnosticsFor(error) { return diagnosticErrors.get(error) || null; }
+function stderrCategory(text) {
+  const bounded = typeof text === "string" ? text.slice(0, 4096) : "";
+  if (/Running as root without --no-sandbox is not supported/i.test(bounded)) return "root-refusal";
+  if (/SUID sandbox helper binary was found, but is not configured correctly|setuid sandbox[^\n]{0,160}not configured correctly/i.test(bounded)) return "helper-configuration";
+  if (/(?:Failed to move to new namespace|unshare|CLONE_NEWUSER|user namespace)[^\n]{0,256}(?:Operation not permitted|Permission denied|EPERM|EACCES)/i.test(bounded)) return "namespace-denied";
+  if (/No usable sandbox!/i.test(bounded)) return "no-usable-sandbox";
+  return "unknown";
+}
+function numericObservation(text, maximum = 0xffffffff) {
+  if (typeof text !== "string" || !/^(?:0|[1-9][0-9]{0,9})\n?$/.test(text)) return Object.freeze({ status: "invalid", value: null });
+  const value = Number(text.trim());
+  return Object.freeze(value <= maximum ? { status: "observed", value } : { status: "invalid", value: null });
+}
+function unavailableNumber() { return Object.freeze({ status: "unavailable", value: null }); }
+function helperObservation(stat) {
+  const empty = { status: "unavailable", kind: null, uid: null, gid: null, mode: null };
+  if (!stat) return Object.freeze(empty);
+  if (![stat.uid, stat.gid, stat.mode].every(value => Number.isSafeInteger(value) && value >= 0 && value <= 0xffffffff)) return Object.freeze({ ...empty, status: "invalid" });
+  if (typeof stat.isSymbolicLink !== "function" || typeof stat.isFile !== "function") return Object.freeze({ ...empty, status: "invalid" });
+  const kind = stat.isSymbolicLink() ? "symlink" : stat.isFile() ? "regular-file" : "other";
+  return Object.freeze({ status: "observed", kind, uid: stat.uid, gid: stat.gid, mode: stat.mode & 0o7777 });
+}
+async function collectLaunchPrerequisites(executable, io = {}) {
+  const read = io.read || (async name => (await readSmall(name, 32, true)).text);
+  const lstat = io.lstat || (name => fs.lstat(name));
+  const uid = io.effectiveUid || (() => process.geteuid());
+  const overridePresent = io.overridePresent || (() => Object.hasOwn(process.env, "CHROME_DEVEL_SANDBOX"));
+  const timeout = io.timeoutMs === undefined ? 250 : io.timeoutMs;
+  if (!Number.isFinite(timeout) || timeout < 1 || timeout > 250) throw problem("diagnostic-deadline-invalid");
+  const number = async (name, maximum) => {
+    try { return numericObservation(await deadline(read(name), timeout, "diagnostic-read-timeout"), maximum); }
+    catch { return unavailableNumber(); }
+  };
+  const helper = async basename => {
+    if (!executable?.realpath) return helperObservation(null);
+    try { return helperObservation(await deadline(lstat(path.join(path.dirname(executable.realpath), basename)), timeout, "diagnostic-stat-timeout")); }
+    catch (error) { return error?.code === "ENOENT" ? Object.freeze({ ...helperObservation(null), status: "absent" }) : helperObservation(null); }
+  };
+  let effectiveUid = unavailableNumber(), sandboxOverridePresent = null;
+  try { const value = uid(); effectiveUid = Number.isSafeInteger(value) && value >= 0 && value <= 0xffffffff ? numericObservation(String(value)) : Object.freeze({ status: "invalid", value: null }); } catch { /* unavailable */ }
+  try { const present = overridePresent(); if (typeof present === "boolean") sandboxOverridePresent = present; } catch { /* unavailable */ }
+  const [unprivilegedUsernsClone, maxUserNamespaces, apparmorRestrictUnprivilegedUserns,
+    apparmorRestrictUnprivilegedUnconfined, underscoreHelper, hyphenHelper] = await Promise.all([
+    number("/proc/sys/kernel/unprivileged_userns_clone", 1), number("/proc/sys/user/max_user_namespaces", 0xffffffff),
+    number("/proc/sys/kernel/apparmor_restrict_unprivileged_userns", 1), number("/proc/sys/kernel/apparmor_restrict_unprivileged_unconfined", 1),
+    // Only the hyphen spelling is Chromium 156's adjacent helper candidate.
+    // Neither metadata result proves a helper is selected or usable.
+    helper("chrome_sandbox"), helper("chrome-sandbox"),
+  ]);
+  return Object.freeze({ basis: "read-only-prerequisites-and-bounded-stderr", stderrCategory: "unknown", stderrCaptureTruncated: false,
+    effectiveUid, unprivilegedUsernsClone, maxUserNamespaces, apparmorRestrictUnprivilegedUserns, apparmorRestrictUnprivilegedUnconfined,
+    chromeDevelSandboxPresent: sandboxOverridePresent, chromeDevelSandboxInherited: false,
+    underscoreHelper, hyphenHelper });
+}
+function attachPrerequisites(error, observations, stderr, truncated) {
+  const safe = safeError(error, "launch-failed");
+  diagnosticErrors.set(safe, Object.freeze({ ...observations, stderrCategory: stderrCategory(stderr), stderrCaptureTruncated: truncated === true }));
+  return safe;
+}
+
 async function launchOwnedChromium() {
-  let pin, profile, child, identity, connection, socket, endpoint, exited, stderr = "", stopping = false, cleanupPromise;
+  let pin, profile, child, identity, connection, socket, endpoint, exited, stderr = "", stderrTruncated = false, prerequisites, stopping = false, cleanupPromise;
   const cleanup = () => cleanupPromise ||= (async () => {
     stopping = true;
     connection?.close();
@@ -235,13 +299,18 @@ async function launchOwnedChromium() {
   try {
     if (process.platform !== "linux" || typeof globalThis.WebSocket !== "function") throw problem("unsupported-host");
     pin = await readLaunchPin();
+    prerequisites = await collectLaunchPrerequisites(pin.executable);
     profile = await fs.mkdtemp(path.join(os.tmpdir(), "iso-owned-cdp-"));
     const env = Object.fromEntries(["PATH", "HOME", "LANG", "LC_ALL", "TZ", "TMPDIR", "XDG_RUNTIME_DIR"]
       .filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
     child = spawn(pin.executable.realpath, launchArguments(profile), { env, detached: true, stdio: ["ignore", "ignore", "pipe"] });
     exited = new Promise(resolve => child.once("exit", () => { connection?.fail("browser-exited"); resolve(); }));
     child.on("error", () => connection?.fail("browser-process-error"));
-    child.stderr.on("data", bytes => { if (stderr.length < 4096) stderr += bytes.toString("utf8").slice(0, 4096 - stderr.length); });
+    child.stderr.on("data", bytes => {
+      const part = bytes.subarray(0, 4097).toString("utf8");
+      if (bytes.length > 4097 || stderr.length + part.length > 4096) stderrTruncated = true;
+      stderr = (stderr + part).slice(0, 4096);
+    });
     await deadline(new Promise((resolve, reject) => { child.once("spawn", resolve); child.once("error", () => reject(problem("browser-spawn-failed"))); }), 3000, "browser-spawn-timeout");
     identity = await deadline(processSnapshot(child.pid, pin.executable), 1000, "process-identity-timeout");
     await deadline((async () => {
@@ -277,14 +346,16 @@ async function launchOwnedChromium() {
     if (version.product !== `Chrome/${pin.browserVersion}` && version.product !== `HeadlessChrome/${pin.browserVersion}`) {
       throw problem("observed-browser-pin-mismatch");
     }
-    return { connection, pin, verify: async () => { try { await verify(); } catch (error) { throw safeError(error, "endpoint-recheck-failed"); } }, close: cleanup };
+    return { connection, pin, prerequisites, verify: async () => { try { await verify(); } catch (error) { throw safeError(error, "endpoint-recheck-failed"); } }, close: cleanup };
   } catch (error) {
-    await cleanup();
-    throw safeError(error, "launch-failed");
+    prerequisites ||= await collectLaunchPrerequisites(pin?.executable);
+    try { await cleanup(); } catch (cleanupError) { throw attachPrerequisites(cleanupError, prerequisites, stderr, stderrTruncated); }
+    throw attachPrerequisites(error, prerequisites, stderr, stderrTruncated);
   }
 }
 function safeError(error, fallback) {
   return /^owned-cdp:[a-z-]+$/.test(error?.message || "") ? problem(error.message.slice(10)) : problem(fallback);
 }
 module.exports = { FlatConnection, launchOwnedChromium, parseActivePort, processIdentity, inspectEndpointRecords,
-  launchArguments, readLaunchPin, deadline, problem, LIMITS, cleanupOwnedProcess, readSmall };
+  launchArguments, readLaunchPin, deadline, problem, LIMITS, cleanupOwnedProcess, readSmall, stderrCategory, numericObservation, helperObservation,
+  collectLaunchPrerequisites, prerequisiteDiagnosticsFor, attachPrerequisites };
