@@ -360,7 +360,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: playwright-report
-          path: e2e/playwright-report/
+          path: |
+            e2e/playwright-report/
+            e2e/test-results/
           if-no-files-found: warn
 
   # scripts/verify-catalog.py shipped in #143 with nothing running it, which

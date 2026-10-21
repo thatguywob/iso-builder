@@ -13,8 +13,9 @@
     for (const key of Object.keys(value)) if (!allowed.includes(key)) fail(`${where}.${key} is unknown`);
     for (const key of required) if (!(key in value)) fail(`${where}.${key} is required`);
   }
+  const TEXT_NONSPACE = new RegExp("[^\\u0009-\\u000d\\u001c-\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]");
   function text(value, where) {
-    if (typeof value !== 'string' || !value.trim() || /[\x00-\x1f\x7f]/.test(value)) fail(`${where} must be nonempty text`);
+    if (typeof value !== 'string' || !TEXT_NONSPACE.test(value) || /[\x00-\x1f\x7f]/.test(value)) fail(`${where} must be nonempty text`);
   }
   function url(value, where, asset = false) {
     text(value, where);
@@ -27,8 +28,10 @@
   function unique(items, where) { if (new Set(items).size !== items.length) fail(`${where} has duplicate entries`); }
   function identifier(value, where) { if (typeof value !== 'string' || !ID.test(value)) fail(`${where} is not an identifier`); }
   function validate(config) {
-    object(config, ['schema_version','preview_only','brand','presentation','output','desktops','variants','default_selection','curated_app_sets','ddi_channels'], ['schema_version','preview_only','brand','presentation','output','desktops','variants','default_selection','curated_app_sets'], 'config');
-    if (config.schema_version !== 1 || typeof config.preview_only !== 'boolean') fail('unsupported schema or preview_only');
+    const guided = config?.schema_version === 2;
+    const required = ['schema_version','preview_only','brand','presentation','output','desktops','default_selection','curated_app_sets', guided ? 'selection' : 'variants'];
+    object(config, [...required,'ddi_channels'], required, 'config');
+    if (![1,2].includes(config.schema_version) || typeof config.preview_only !== 'boolean') fail('unsupported schema or preview_only');
     const b = config.brand;
     object(b, ['name','logo_url','favicon_url','homepage_url','documentation_url','support_url','disclaimer'], ['name','homepage_url','documentation_url'], 'brand');
     text(b.name, 'brand.name');
@@ -36,23 +39,31 @@
     for (const key of ['logo_url','favicon_url']) if (key in b) url(b[key], `brand.${key}`, true);
     if ('disclaimer' in b) text(b.disclaimer, 'brand.disclaimer');
     if (config.preview_only && !b.disclaimer) fail('preview requires a disclaimer');
-    object(config.presentation, ['headline','intro','accent_color'], ['headline','intro','accent_color'], 'presentation');
+    object(config.presentation, ['headline','intro','accent_color',...(guided?['colors','choice_style','font_family']:[])], ['headline','intro','accent_color'], 'presentation');
     text(config.presentation.headline, 'presentation.headline'); text(config.presentation.intro, 'presentation.intro');
     text(config.presentation.accent_color, 'accent_color');
     if (!/^#[0-9a-fA-F]{6}$/.test(config.presentation.accent_color)) fail('accent_color must be #RRGGBB');
+    if ('choice_style' in config.presentation && !['illustrated','thumbnail'].includes(config.presentation.choice_style))fail('invalid choice_style');
+    if ('font_family' in config.presentation && !['system','inter','dm-sans'].includes(config.presentation.font_family))fail('invalid font_family');
+    if ('colors' in config.presentation) {
+      const keys=['background','surface','text','muted','accent','accent_text'];
+      object(config.presentation.colors,[...keys,'border','hover_surface','focus','selected_surface'],keys,'colors');
+      for(const value of Object.values(config.presentation.colors)) if(typeof value!=='string'||!/^#[0-9a-fA-F]{6}$/.test(value))fail('colors must be #RRGGBB');
+    }
     object(config.output, ['volume_label','filename_prefix'], ['volume_label','filename_prefix'], 'output');
     text(config.output.volume_label, 'volume_label'); text(config.output.filename_prefix, 'filename_prefix');
     if (!/^[A-Z0-9_]{1,32}$/.test(config.output.volume_label)) fail('invalid volume_label');
     if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(config.output.filename_prefix)) fail('invalid filename_prefix');
-    list(config.desktops,'desktops'); list(config.variants,'variants'); list(config.curated_app_sets,'curated_app_sets');
+    list(config.desktops,'desktops'); if (!guided) list(config.variants,'variants'); list(config.curated_app_sets,'curated_app_sets');
     for (const d of config.desktops) {
-      object(d, ['id','name','description','default_flatpaks'], ['id','name','description','default_flatpaks'], 'desktop');
-      identifier(d.id,'desktop.id'); text(d.name,'desktop.name'); text(d.description,'desktop.description'); list(d.default_flatpaks,'default_flatpaks');
+      const fields=guided?['id','default_flatpaks']:['id','name','description','default_flatpaks'];
+      object(d,fields,fields,'desktop');
+      identifier(d.id,'desktop.id'); if (!guided) { text(d.name,'desktop.name'); text(d.description,'desktop.description'); } list(d.default_flatpaks,'default_flatpaks');
       if (d.default_flatpaks.some(id => !validFlatpakId(id))) fail('invalid Flatpak ID');
       unique(d.default_flatpaks,'default_flatpaks');
     }
-    for (const v of config.variants) { object(v,['id','name'],['id','name'],'variant'); identifier(v.id,'variant.id'); text(v.name,'variant.name'); }
-    unique(config.desktops.map(d=>d.id),'desktops'); unique(config.variants.map(v=>v.id),'variants');
+    for (const v of config.variants || []) { object(v,['id','name'],['id','name'],'variant'); identifier(v.id,'variant.id'); text(v.name,'variant.name'); }
+    unique(config.desktops.map(d=>d.id),'desktops'); unique((config.variants || []).map(v=>v.id),'variants');
     const desktopIds = new Set(config.desktops.map(d=>d.id));
     for (const set of config.curated_app_sets) {
       object(set,['id','label','desktops','url','format'],['id','label','desktops','url','format'],'curated_app_set');
@@ -63,7 +74,12 @@
     }
     unique(config.curated_app_sets.map(s=>s.id),'curated_app_sets');
     const selection=config.default_selection;
-    if (selection?.kind==='catalog') {
+    if (guided) {
+      validateSelection(config.selection, desktopIds);
+      if (selection?.kind === 'leaf') { object(selection,['kind','leaf_id'],['kind','leaf_id'],'default_selection'); leafId(selection.leaf_id,'default leaf'); }
+      else if (selection?.kind === 'none') object(selection,['kind'],['kind'],'default_selection');
+      else fail('v2 default_selection must identify a leaf or none');
+    } else if (selection?.kind==='catalog') {
       object(selection,['kind','variant','flavor','platform'],['kind','variant','flavor','platform'],'default_selection');
       identifier(selection.variant,'default variant'); identifier(selection.flavor,'default flavor');
       if (!config.variants.some(v=>v.id===selection.variant) || !desktopIds.has(selection.flavor)) fail('default references unknown choice');
@@ -71,7 +87,7 @@
       object(selection,['kind','image','platform'],['kind','image','platform'],'default_selection');
       if (typeof selection.image!=='string' || !/^[a-z0-9.-]+(?::[0-9]+)?\/[a-z0-9._/-]+(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}|@sha256:[0-9a-f]{64})$/.test(selection.image)) fail('invalid default image');
     } else fail('unsupported selection kind');
-    if (!PLATFORMS.includes(selection.platform)) fail('unsupported default platform');
+    if (!guided && !PLATFORMS.includes(selection.platform)) fail('unsupported default platform');
     if ('ddi_channels' in config) {
       list(config.ddi_channels,'ddi_channels');
       for (const ch of config.ddi_channels) {
@@ -83,8 +99,32 @@
     }
     return freeze(config);
   }
+  function selectionText(value,where){if(typeof value!=='string'||!TEXT_NONSPACE.test(value)||/[\x00-\x1f\x7f]/.test(value))fail(`${where} must be nonempty text`);let length=0;for(const character of value){if(++length>2048||character==='<'||character==='>')fail(`${where} must be bounded plain text`);}}
+  function selectionId(value,where){identifier(value,where);if(value.length>64)fail(`${where} is too long`);}
+  function leafId(value,where){if(typeof value!=='string'||!/^[a-z0-9][a-z0-9._:/-]{0,191}$/.test(value))fail(`${where} is not a leaf ID`);}
+  const FACETS=['family','base','desktop','hardware','platform','graphics','edition','gaming_mode','channel','graphics_generation'];
+  function validateSelection(selection, desktopIds) {
+    object(selection,['paths','default_path','facets','recommendations'],['paths','default_path','facets','recommendations'],'selection');
+    list(selection.paths,'selection.paths'); list(selection.facets,'selection.facets'); list(selection.recommendations,'selection.recommendations');
+    if(selection.paths.length<1||selection.paths.length>4||selection.facets.length<1||selection.facets.length>10||selection.recommendations.length>8) fail('selection bounds exceeded');
+    for(const facet of selection.facets) {
+      object(facet,['id','label','description','values'],['id','label','values'],'facet');
+      if(!FACETS.includes(facet.id))fail('unknown facet');selectionText(facet.label,'facet.label');if('description'in facet)selectionText(facet.description,'facet.description');list(facet.values,'facet.values');if(facet.values.length<1||facet.values.length>256)fail('facet values bounds exceeded');
+      for(const value of facet.values) {object(value,['id','label','description','card'],['id','label'],'facet value');if('card'in value){object(value.card,['image_url','image_alt','badge'],['image_url','image_alt'],'card');url(value.card.image_url,'card.image_url',true);selectionText(value.card.image_alt,'card.image_alt');if('badge'in value.card)selectionText(value.card.badge,'card.badge');}if(facet.id==='platform'){if(!PLATFORMS.includes(value.id))fail('unknown platform');}else selectionId(value.id,'facet value.id');selectionText(value.label,'facet value.label');if('description'in value)selectionText(value.description,'facet value.description');}
+      unique(facet.values.map(v=>v.id),'facet values');
+    }
+    unique(selection.facets.map(f=>f.id),'facets');
+    const known=new Set(selection.facets.map(f=>f.id));
+    for(const path of selection.paths) {object(path,['id','label','facets'],['id','label','facets'],'path');selectionId(path.id,'path.id');selectionText(path.label,'path.label');list(path.facets,'path.facets');if(!path.facets.length||path.facets.some(f=>!known.has(f)))fail('path references unknown facet');unique(path.facets,'path facets');}
+    unique(selection.paths.map(p=>p.id),'paths');if(!selection.paths.some(p=>p.id===selection.default_path))fail('unknown default path');
+    for(const item of selection.recommendations){object(item,['leaf_id','label','reason'],['leaf_id','label','reason'],'recommendation');leafId(item.leaf_id,'recommendation leaf');selectionText(item.label,'recommendation label');selectionText(item.reason,'recommendation reason');}
+    unique(selection.recommendations.map(r=>r.leaf_id),'recommendations');
+    const desktops=new Set(selection.facets.find(f=>f.id==='desktop')?.values.map(v=>v.id)||[]);
+    if([...desktopIds].some(id=>!desktops.has(id)))fail('app defaults reference unknown desktop facet');
+  }
   function freeze(value) { if(value&&typeof value==='object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; }
   function variants(config, snapshot) {
+    if(config.schema_version===2) return (config.selection.facets.find(f=>f.id==='base')?.values||[]).map(v=>({id:v.id,name:v.label,des:config.desktops.filter(d=>(snapshot.targets||[]).some(e=>e.target?.variant===v.id&&e.target?.flavor===d.id&&(e.scheduled||e.availability?.available))).map(d=>d.id)})).filter(v=>v.des.length);
     return config.variants.map(v=>({...v,des:config.desktops.filter(d=>(snapshot.targets||[]).some(e=>e.target?.variant===v.id&&e.target?.flavor===d.id&&(e.scheduled||e.availability?.available))).map(d=>d.id)})).filter(v=>v.des.length);
   }
   const api={validate,variants,validFlatpakId};

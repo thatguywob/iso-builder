@@ -6,6 +6,7 @@
 // would report. The upstream set files are served from fixtures by
 // page.route, so the test does not depend on another repo's main branch.
 const { test, expect } = require("@playwright/test");
+require('./legacy-deployment').useLegacyDeployment(test);
 
 const BREWFILE = [
   'brew "gh"',

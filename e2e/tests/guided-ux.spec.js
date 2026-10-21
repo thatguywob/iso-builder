@@ -1,5 +1,6 @@
 // UX contracts use representative Flathub metadata, never a real ISO download.
 const { test, expect } = require('@playwright/test');
+require('./legacy-deployment').useLegacyDeployment(test);
 const fs = require('node:fs');
 const path = require('node:path');
 const firefox = {

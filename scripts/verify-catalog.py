@@ -171,7 +171,11 @@ def picker_refs() -> list[tuple[str, str]]:
         # is still the authority for offered target cells and qualification.
         config_path = APP_JS.with_name("builder-config.json")
         config = json.loads(config_path.read_text())
-        variants = {v["id"] for v in config["variants"]}
+        if config["schema_version"] == 2:
+            bases = next((f["values"] for f in config["selection"]["facets"] if f["id"] == "base"), [])
+            variants = {v["id"] for v in bases}
+        else:
+            variants = {v["id"] for v in config["variants"]}
         desktops = {d["id"] for d in config["desktops"]}
         refs = snapshot_refs(CATALOG_SNAPSHOT)
         return [(ref, "builder-config.json + catalog-snapshot.json") for ref, _ in refs

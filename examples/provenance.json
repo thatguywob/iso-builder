@@ -1,6 +1,6 @@
 {
   "checked_at": "2026-10-20",
-  "scope": "Documentation/source verification only; no registry manifest or installation qualification.",
+  "scope": "Documentation, live upstream picker, and source verification only; no registry manifest or installation qualification. Leaf-specific evidence is in each guided-catalog.json; card provenance and licensing gaps are in assets.json.",
   "projects": {
     "bluefin": {
       "homepage": "https://projectbluefin.io/",
@@ -34,12 +34,31 @@
             "Brand accent #4285f4",
             "Artwork must not be distorted or modified"
           ]
+        },
+        {
+          "url": "https://projectbluefin.io/#scene-picker",
+          "supports": [
+            "Classic, Dakota Alpha, and Utah Coming Soon card identities and official card image URLs"
+          ]
+        },
+        {
+          "url": "https://github.com/projectbluefin/utah",
+          "supports": [
+            "Experimental pre-alpha status and testing image; stable planned only"
+          ]
+        },
+        {
+          "url": "https://github.com/projectbluefin/utah/blob/main/.github/workflows/build.yml",
+          "supports": [
+            "x86_64 workflow architecture intent, not a live registry manifest"
+          ]
         }
       ],
       "assets": {
-        "mode": "text-only",
+        "mode": "official-URL-reference-only",
         "redistributed": [],
-        "license_claim": null
+        "license_claim": null,
+        "manifest": "assets.json"
       }
     },
     "bazzite": {
@@ -72,14 +91,26 @@
             "Project naming guidance",
             "Artwork must not be distorted or modified"
           ]
+        },
+        {
+          "url": "https://bazzite.gg/#download",
+          "supports": [
+            "Device-first selection, conditional NVIDIA generation, handheld graphics skip, HTPC NVIDIA beta acknowledgement"
+          ]
+        },
+        {
+          "url": "https://raw.githubusercontent.com/ublue-os/bazzite/main/.github/workflows/build.yml",
+          "supports": [
+            "Ten named image repositories, x86_64 build architecture and stable tag generation"
+          ]
         }
       ],
       "assets": {
-        "mode": "text-only",
+        "mode": "official-URL-reference-only",
         "redistributed": [],
-        "license_claim": null
-      },
-      "accent_note": "#8b5cf6 is an example design choice, not an official brand-color assertion"
+        "license_claim": null,
+        "manifest": "assets.json"
+      }
     }
   }
 }

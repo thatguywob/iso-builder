@@ -35,6 +35,7 @@ function app() {
   const context = {
     console, performance, Uint8Array, Blob, URL, Promise, WeakSet,
     BUILDER_CONFIG: require("../../app/public/builder-config.js").validate(structuredClone(require("../../app/public/builder-config.json"))),
+    GUIDED: false, manualImageMode: false, validGuidedSelection: () => false,
     location: { search: "" }, setTimeout: () => 0,
     document: { createElement: () => ({ click: () => { trace.downloads++; } }) },
     navigator: {}, $: element, currentOp: op, buildResultRevision: 0,
@@ -70,6 +71,8 @@ function expectFailed({ op, element }) {
   expect(element("stage").textContent).toContain("Build failed");
   expect(element("postcard").classList.hidden).toBe(true);
 }
+
+test("invalid guided selection blocks engine and sink before build", async()=>{const a=app();a.c.GUIDED=true;await a.c.build();expect(a.trace.calls).toBe(0);expect(a.trace.legacy).toBe(0);expect(a.trace.closes).toBe(0);});
 
 test.describe("app result lifecycle VM", () => {
   test("preview configuration blocks direct build before engine or sink actions", async () => {

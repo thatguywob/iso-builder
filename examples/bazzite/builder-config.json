@@ -1,16 +1,31 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "preview_only": true,
   "brand": {
     "name": "Bazzite",
     "homepage_url": "https://bazzite.gg/",
     "documentation_url": "https://docs.bazzite.gg/",
-    "disclaimer": "Unofficial Bazzite configuration demo. Not affiliated with or endorsed by Bazzite. Preview only; browser ISO creation and installation support are not qualified."
+    "disclaimer": "Unofficial Bazzite configuration preview. Not affiliated with or endorsed by the project. No image inspection or ISO creation; browser build and installation support are not qualified.",
+    "logo_url": "https://bazzite.gg/content/uploads/2024/02/Bazzite_Color_Long.svg"
   },
   "presentation": {
-    "headline": "Explore a Bazzite image configuration",
-    "intro": "One shared ISO Builder, configured for a different project. Review the example image and defaults; use the official project for installation guidance.",
-    "accent_color": "#8b5cf6"
+    "headline": "Choose your Bazzite experience",
+    "intro": "Start with your device, then choose graphics and a desktop from documented image combinations.",
+    "accent_color": "#782fdb",
+    "colors": {
+      "background": "#1c1c1c",
+      "surface": "#262626",
+      "text": "#ffffff",
+      "muted": "#cccccc",
+      "accent": "#782fdb",
+      "accent_text": "#ffffff",
+      "border": "#4b4b4b",
+      "hover_surface": "#343434",
+      "focus": "#782fdb",
+      "selected_surface": "#1543b4"
+    },
+    "choice_style": "thumbnail",
+    "font_family": "dm-sans"
   },
   "output": {
     "volume_label": "BAZZITE_DEMO",
@@ -19,16 +34,188 @@
   "desktops": [
     {
       "id": "kde",
-      "name": "KDE Plasma",
-      "description": "Example desktop metadata; not a hardware or installation qualification.",
+      "default_flatpaks": []
+    },
+    {
+      "id": "gnome",
       "default_flatpaks": []
     }
   ],
-  "variants": [],
   "default_selection": {
-    "kind": "image",
-    "image": "ghcr.io/ublue-os/bazzite:stable",
-    "platform": "linux/amd64"
+    "kind": "none"
   },
-  "curated_app_sets": []
+  "curated_app_sets": [],
+  "selection": {
+    "default_path": "device-first",
+    "paths": [
+      {
+        "id": "device-first",
+        "label": "Start with your device",
+        "facets": [
+          "hardware",
+          "graphics",
+          "graphics_generation",
+          "desktop",
+          "family",
+          "edition",
+          "channel",
+          "platform"
+        ]
+      }
+    ],
+    "facets": [
+      {
+        "id": "hardware",
+        "label": "What kind of device?",
+        "values": [
+          {
+            "id": "desktop",
+            "label": "Desktop or laptop",
+            "description": "Use Bazzite as a desktop operating system.",
+            "card": {
+              "image_url": "https://bazzite.gg/content/uploads/2026/09/desktop-laptop.webp",
+              "image_alt": "Desktop and laptop computers"
+            }
+          },
+          {
+            "id": "htpc",
+            "label": "Home theater PC",
+            "description": "A console-like Steam Gaming Mode experience. NVIDIA has a beta warning.",
+            "card": {
+              "image_url": "https://bazzite.gg/content/uploads/2026/09/htpc.webp",
+              "image_alt": "Home theater gaming computer"
+            }
+          },
+          {
+            "id": "handheld",
+            "label": "Handheld",
+            "description": "Documented x86-64 handheld path. Check the official device compatibility guidance.",
+            "card": {
+              "image_url": "https://bazzite.gg/content/uploads/2026/09/handheld.webp",
+              "image_alt": "Handheld gaming computer"
+            }
+          }
+        ]
+      },
+      {
+        "id": "graphics",
+        "label": "Which graphics hardware?",
+        "values": [
+          {
+            "id": "amd-intel",
+            "label": "AMD or Intel",
+            "description": "Gaming Mode compatibility is narrower; check the official hardware guidance.",
+            "card": {
+              "image_url": "https://bazzite.gg/content/uploads/2026/09/amd-intel3.svg",
+              "image_alt": "AMD and Intel graphics"
+            }
+          },
+          {
+            "id": "nvidia",
+            "label": "NVIDIA",
+            "description": "The desktop path distinguishes newer and older NVIDIA GPUs.",
+            "card": {
+              "image_url": "https://bazzite.gg/content/uploads/2026/09/nvidia.svg",
+              "image_alt": "NVIDIA graphics"
+            }
+          }
+        ]
+      },
+      {
+        "id": "graphics_generation",
+        "label": "Which NVIDIA generation?",
+        "values": [
+          {
+            "id": "modern",
+            "label": "GTX 16-series or RTX",
+            "description": "Newer NVIDIA path. HTPC Gaming Mode remains beta.",
+            "card": {
+              "image_url": "https://bazzite.gg/content/uploads/2026/09/rtx.svg",
+              "image_alt": "Newer NVIDIA graphics"
+            }
+          },
+          {
+            "id": "legacy",
+            "label": "GTX 1080 or older",
+            "description": "Older NVIDIA desktop path; not offered for HTPC Gaming Mode.",
+            "card": {
+              "image_url": "https://bazzite.gg/content/uploads/2026/09/gtx.svg",
+              "image_alt": "Older NVIDIA graphics"
+            }
+          }
+        ]
+      },
+      {
+        "id": "desktop",
+        "label": "Choose your desktop",
+        "values": [
+          {
+            "id": "kde",
+            "label": "KDE Plasma",
+            "description": "A familiar, customizable desktop.",
+            "card": {
+              "image_url": "https://bazzite.gg/content/uploads/2026/09/kde-desktop.webp",
+              "image_alt": "KDE Plasma desktop preview"
+            }
+          },
+          {
+            "id": "gnome",
+            "label": "GNOME",
+            "description": "A focused desktop with a touch-friendly overview.",
+            "card": {
+              "image_url": "https://bazzite.gg/content/uploads/2026/09/gnome-desktop.webp",
+              "image_alt": "GNOME desktop preview"
+            }
+          }
+        ]
+      },
+      {
+        "id": "family",
+        "label": "Image family",
+        "values": [
+          {
+            "id": "bazzite",
+            "label": "Bazzite"
+          }
+        ]
+      },
+      {
+        "id": "edition",
+        "label": "Experience",
+        "values": [
+          {
+            "id": "desktop",
+            "label": "Desktop"
+          },
+          {
+            "id": "gaming",
+            "label": "Steam Gaming Mode"
+          }
+        ]
+      },
+      {
+        "id": "channel",
+        "label": "Upstream channel",
+        "values": [
+          {
+            "id": "stable",
+            "label": "Stable",
+            "description": "An upstream tag, not evidence of browser build qualification."
+          }
+        ]
+      },
+      {
+        "id": "platform",
+        "label": "Computer architecture",
+        "values": [
+          {
+            "id": "linux/amd64",
+            "label": "x86-64",
+            "description": "ARM presets are not offered by this example."
+          }
+        ]
+      }
+    ],
+    "recommendations": []
+  }
 }

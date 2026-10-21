@@ -7,6 +7,7 @@ const { qualifiedCatalogFixture } = require("./qualified-catalog-fixture");
 // linear memory, watches for progress, and reports. Stub the first, withhold
 // the second, and fast-forward the clock over the third.
 const { test, expect } = require("@playwright/test");
+require('./legacy-deployment').useLegacyDeployment(test);
 
 // watchEngineMemory() and tboxWasmMB() are reachable from the page because
 // app.js is a classic script, so its top-level function declarations land on

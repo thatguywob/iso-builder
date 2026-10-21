@@ -23,6 +23,7 @@
 // Deployment-owned, validated presentation policy. Never fall back to another brand.
 let BUILDER_CONFIG;
 try {
+  if (document.querySelector && !globalThis.TboxExperiences) throw new Error("Deployment experiences are missing or invalid");
   BUILDER_CONFIG = globalThis.TboxBuilderConfig.validate(globalThis.TBOX_BUILDER_CONFIG);
 } catch (error) {
   const main = document.querySelector?.("main");
@@ -54,7 +55,7 @@ function applyBuilderBranding() {
   const disclaimer=document.querySelector("#builder-disclaimer");
   disclaimer.textContent=brand.disclaimer || ""; disclaimer.hidden=!brand.disclaimer;
   document.querySelector("#label").value=config.output.volume_label;
-  if (!config.variants.length && !config.ddi_channels?.length) {
+  if (config.schema_version === 1 && !config.variants.length && !config.ddi_channels?.length) {
     document.querySelector("#choose-heading").textContent="Review your image";
     document.querySelector("#desktop-help").textContent="This deployment starts from a configured container image. Check its reference and computer type before continuing.";
     document.querySelector("#variant").parentElement.hidden=true;
@@ -64,6 +65,12 @@ function applyBuilderBranding() {
   const rgb=config.presentation.accent_color.slice(1).match(/../g).map(v=>parseInt(v,16)/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4);
   const luminance=rgb[0]*.2126+rgb[1]*.7152+rgb[2]*.0722;
   document.documentElement.style.setProperty("--accent-ink",luminance>.179?"#000":"#fff");
+  document.documentElement.dataset.choiceStyle=config.presentation.choice_style || "illustrated";
+  document.documentElement.dataset.fontFamily=config.presentation.font_family || "system";
+  if(config.presentation.colors) {
+    const names={background:"--bg",surface:"--panel",text:"--fg",muted:"--dim",accent:"--accent",accent_text:"--accent-ink",border:"--border",hover_surface:"--choice-hover",focus:"--choice-focus",selected_surface:"--choice-selected"};
+    for(const [key,value] of Object.entries(config.presentation.colors)) document.documentElement.style.setProperty(names[key],value);
+  }
   if(config.preview_only) {
     document.querySelector("#introspect").disabled=true;
     document.querySelector("#introspect").textContent="Preview only";
@@ -71,6 +78,18 @@ function applyBuilderBranding() {
   }
 }
 applyBuilderBranding();
+if(document.querySelector && globalThis.TboxExperiences) {
+  const picker=document.querySelector("#experience");
+  for(const item of globalThis.TboxExperiences.entries) {const option=document.createElement("option");option.value=item.id;option.textContent=item.name;picker.appendChild(option);}
+  picker.value=globalThis.TboxExperiences.id;
+  picker.addEventListener("change",()=>{
+    if(isOperationBusy()){picker.value=globalThis.TboxExperiences.id;return;}
+    const target=globalThis.TboxExperiences.target(picker.value);
+    if(target) location.assign(target);
+  });
+  window.addEventListener("pageshow",event=>{if(event.persisted) location.reload();});
+}
+
 
 let SHIM = "https://relay.tunaos.org";
 
@@ -632,7 +651,12 @@ function parseImage(raw) {
 }
 
 // ── Image picker & unified BuildRequest v1 operation state ───────────────
-const DESKTOPS = Object.fromEntries(BUILDER_CONFIG.desktops.map(d => [d.id, d]));
+const GUIDED = BUILDER_CONFIG.schema_version === 2;
+let guidedPicker = null, guidedModel = null, guidedError = null, manualImageMode = false, guidedSelectionIdentity = null;
+const DESKTOPS = Object.fromEntries(BUILDER_CONFIG.desktops.map(d => {
+  const presentation=BUILDER_CONFIG.selection?.facets.find(f=>f.id==="desktop")?.values.find(v=>v.id===d.id);
+  return [d.id,{...d,name:presentation?.label || d.name || d.id,description:presentation?.description || d.description}];
+}));
 const DDI_CHANNELS = BUILDER_CONFIG.ddi_channels || [];
 let selectedDdi = null;
 let selectionWasExplicit = false;
@@ -794,7 +818,8 @@ function syncInspectAction() {
 }
 function setOperationBusy(busy, phase = null) {
   activeBusyPhase = busy ? (phase || "busy") : null;
-  for (const id of ["variant", "platform", "image", "introspect", "clearcache"]) {
+  guidedPicker?.setBusy(busy);
+  for (const id of ["variant", "platform", "image", "introspect", "clearcache", "experience"]) {
     const el = $(id);
     if (el) el.disabled = Boolean(busy) || (id === "introspect" && BUILDER_CONFIG.preview_only);
   }
@@ -1052,6 +1077,7 @@ function applyDetectedDesktopAndPackaging(fObj) {
 async function inspect() {
   if (BUILDER_CONFIG.preview_only) return;
   if (isOperationBusy()) return;
+  if (GUIDED && !manualImageMode && !validGuidedSelection()) { log("Choose an available image from the catalog before checking it."); return; }
   selectedDdi = null; // inspecting an image ref is the OCI path
   updateShim();
   const raw = $("image").value.trim();
@@ -1085,7 +1111,7 @@ async function inspect() {
 
     if (!hasTestStub) {
       await loadCatalogSnapshot();
-      if ($("image").value.trim() !== raw) throw new Error("The selected image is no longer available in this catalog. Choose an image again.");
+      if ((GUIDED && !manualImageMode && !validGuidedSelection()) || $("image").value.trim() !== raw) throw new Error("The selected image is no longer available in this catalog. Choose an image again.");
       const refreshed = buildRequestFromForm(op);
       Object.assign(op, refreshed);
     }
@@ -1341,6 +1367,7 @@ async function buildDdi(ch) {
 
 async function build() {
   if (BUILDER_CONFIG.preview_only) return;
+  if (GUIDED && !manualImageMode && !validGuidedSelection()) { log("Choose and check an available catalog image before building."); return; }
   if (selectedDdi) return buildDdi(selectedDdi);
   if (isOperationBusy()) return;
   clearBuildResult();
@@ -1480,6 +1507,7 @@ async function build() {
 function updateShare() {
   updateShim();
   const p = new URLSearchParams();
+  if(globalThis.TboxExperiences && globalThis.TboxExperiences.id!==globalThis.TboxExperiences.defaultId) p.set("experience",globalThis.TboxExperiences.id);
   if ($("image").value) p.set("image", $("image").value);
   const vid = ($("variant")?.value || "").replace(/^ddi:/, "");
   const plat = currentPlatform();
@@ -1586,7 +1614,51 @@ function syncEditionSelection() {
     : "No image is selected. Choose a desktop or enter a custom image to continue.";
   syncInspectAction();
 }
+function validGuidedSelection() {
+  if (guidedError || !guidedModel || !guidedPicker) return false;
+  const leaf=guidedPicker.getSelection();
+  return Boolean(leaf?.source.kind === "target" && leaf.selectable && leaf.entry?.publication.ref === $("image").value.trim() && leaf.entry.target.platform === currentPlatform());
+}
+function refreshGuidedPicker() {
+  const container=$("guided-picker");
+  if (!container || !document.querySelector) return;
+  container.hidden=false;
+  for(const id of ["editions","selection-summary","desktop-help"]) $(id).hidden=true;
+  const custom=$("custom-image-options"),advanced=$("advanced-options");
+  if(custom.parentElement!==advanced) advanced.appendChild(custom);
+  if($("base-options").parentElement!==advanced) advanced.appendChild($("base-options"));
+  $("choose-heading").textContent="Choose your image";
+  try {
+    const model=globalThis.TboxGuidedCatalog.createModel(globalThis.TBOX_GUIDED_CATALOG,catalogSnapshot,BUILDER_CONFIG,{
+      flavorMetadata:globalThis.TBOX_FLAVOR_METADATA,
+      isOffered:entry=>Boolean(entry.scheduled||entry.availability?.available),
+    });
+    guidedError=null; guidedModel=model;
+    if(guidedPicker) guidedPicker.refresh(model);
+    else guidedPicker=globalThis.TboxGuidedPicker.mount(container,{model,onSelection:(leaf,state)=>{
+      if(isOperationBusy()) return;
+      selectedDdi=null; manualImageMode=false; selectionWasExplicit=state.origin==="explicit";
+      const previous=$("image").value;
+      const identity=leaf?`${leaf.id}\n${leaf.evidenceKey}`:null;
+      const changed=guidedSelectionIdentity!==identity;guidedSelectionIdentity=identity;
+      if(leaf?.source.kind==="target" && leaf.selectable) {
+        $("variant").value=leaf.entry.target.variant;
+        $("platform").value=leaf.entry.target.platform;
+        $("image").value=leaf.entry.publication.ref;
+      } else $("image").value="";
+      if(changed || previous!==$("image").value) invalidateOperation("guided-selection-changed");
+      syncInspectAction(); updateShare();
+    },qualification:entry=>({text:catalogQualification(entry).status==="qualified"?"Browser build verified":"Browser build not yet verified"})});
+  } catch(error) {
+    guidedError=error; guidedModel=null; guidedSelectionIdentity=null; $("image").value="";
+    invalidateOperation("guided-catalog-unavailable");
+    container.textContent="The image catalog is unavailable or does not match this deployment. Contact its maintainer.";
+    container.setAttribute("role","alert"); syncInspectAction();
+  }
+}
 function renderEditions() {
+  if (GUIDED && manualImageMode) { $("editions").hidden=false; $("advanced-options").appendChild($("editions")); }
+  if (GUIDED && !manualImageMode) { refreshGuidedPicker(); return; }
   const box = $("editions");
   if (!box) return;
   box.innerHTML = "";
@@ -1668,6 +1740,7 @@ function refreshConfiguredChoices() {
   if (previous && (VARIANTS.some(v => v.id === previous) || DDI_CHANNELS.some(c => `ddi:${c.id}` === previous))) picker.value = previous;
   else if (previous) { picker.value = ""; }
   const parsed = parseCuratedTunaRef($("image").value);
+  if (GUIDED) return;
   if (parsed && previous) {
     const entry = findCatalogEntry(parsed.variant, parsed.flavor, currentPlatform());
     // Explicit platform choices may be unqualified/unscheduled but still have a
@@ -1683,6 +1756,7 @@ if ($("platform")) {
   $("platform").addEventListener("change", () => {
     if (isOperationBusy()) return;
     selectionWasExplicit = true;
+    if(GUIDED) { manualImageMode=true; guidedPicker?.suspend(); }
     renderEditions();
     invalidateOperation("platform-changed");
     fpRender();
@@ -1692,6 +1766,7 @@ if ($("platform")) {
 $("variant").addEventListener("change", () => {
   if (isOperationBusy()) return;
   selectionWasExplicit = true;
+  if(GUIDED) { manualImageMode=true; guidedPicker?.suspend(); }
   const vId = $("variant").value.replace(/^ddi:/, "");
   if ($("platform") && $("platform").value !== "linux/arm64") {
     $("platform").value = defaultPlatformForVariant(vId);
@@ -1715,6 +1790,7 @@ renderEditions();
 $("image").addEventListener("input", () => {
   if (isOperationBusy()) return;
   selectionWasExplicit = true;
+  if (GUIDED) { manualImageMode=true; guidedPicker?.suspend(); }
   if ($("image").value.trim()) selectedDdi = null;
   const parsed = parseCuratedTunaRef($("image").value);
   if (parsed && VARIANTS.some((v) => v.id === parsed.variant)) {
@@ -1746,7 +1822,9 @@ const URL_PACKAGE_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
 {
   const q = new URLSearchParams(location.search);
   const configured = BUILDER_CONFIG.default_selection;
-  if (configured.kind === "image") {
+  if (GUIDED) {
+    // The validated guided default was already resolved; URL intent below is explicit.
+  } else if (configured.kind === "image") {
     $("image").value=configured.image;
     $("platform").value=configured.platform;
     const custom=document.querySelector?.("#custom-image-options"); if(custom) custom.open=true;
@@ -1797,6 +1875,11 @@ const URL_PACKAGE_NAME = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/;
   if (q.get("label")) $("label").value = q.get("label");
   if (SUPPLY_CHAIN_PARAMS.some((k) => q.get(k))) {
     log("Ignored ?shim=/?initrd= from this link — supply-chain params are not applied from URLs (iso-builder#114). Set them manually if intended.");
+  }
+  if(GUIDED && selectionWasExplicit) {
+    manualImageMode=true; guidedPicker?.suspend();
+    const advanced=document.querySelector?.("#advanced-options");if(advanced)advanced.open=true;
+    const custom=document.querySelector?.("#custom-image-options");if(custom&&q.get("image"))custom.open=true;
   }
   const parsedImg = parseCuratedTunaRef($("image").value);
   if (parsedImg && VARIANTS.some((v) => v.id === parsedImg.variant)) {

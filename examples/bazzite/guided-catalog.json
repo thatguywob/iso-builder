@@ -1,0 +1,661 @@
+{
+  "schemaVersion": 1,
+  "kind": "guided-image-catalog",
+  "catalogId": "bazzite-preview",
+  "generatedAt": "2026-10-20T16:55:00Z",
+  "snapshotDigest": null,
+  "leaves": [
+    {
+      "id": "bazzite/bazzite/stable/linux/amd64",
+      "source": {
+        "kind": "preview",
+        "ref": "ghcr.io/ublue-os/bazzite:stable",
+        "platform": "linux/amd64",
+        "evidence": [
+          {
+            "url": "https://raw.githubusercontent.com/ublue-os/bazzite/main/.github/workflows/build.yml",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "ref",
+              "platform",
+              "channel"
+            ]
+          },
+          {
+            "url": "https://docs.bazzite.gg/General/FAQ/",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "desktop",
+              "hardware"
+            ]
+          },
+          {
+            "url": "https://bazzite.gg/content/themes/betheme-child/script135.js",
+            "checkedAt": "2026-10-20T17:22:00Z",
+            "claims": [
+              "hardware",
+              "desktop"
+            ]
+          }
+        ]
+      },
+      "facets": {
+        "family": [
+          "bazzite"
+        ],
+        "desktop": [
+          "kde"
+        ],
+        "edition": [
+          "desktop"
+        ],
+        "graphics": [
+          "amd-intel"
+        ],
+        "channel": [
+          "stable"
+        ],
+        "hardware": [
+          "desktop"
+        ]
+      },
+      "notices": [
+        {
+          "code": "preview-only",
+          "text": "Unofficial preset preview. Image availability and browser ISO creation are not qualified."
+        }
+      ]
+    },
+    {
+      "id": "bazzite/bazzite-gnome/stable/linux/amd64",
+      "source": {
+        "kind": "preview",
+        "ref": "ghcr.io/ublue-os/bazzite-gnome:stable",
+        "platform": "linux/amd64",
+        "evidence": [
+          {
+            "url": "https://raw.githubusercontent.com/ublue-os/bazzite/main/.github/workflows/build.yml",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "ref",
+              "platform",
+              "channel"
+            ]
+          },
+          {
+            "url": "https://docs.bazzite.gg/General/FAQ/",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "desktop",
+              "hardware"
+            ]
+          },
+          {
+            "url": "https://bazzite.gg/content/themes/betheme-child/script135.js",
+            "checkedAt": "2026-10-20T17:22:00Z",
+            "claims": [
+              "hardware",
+              "desktop"
+            ]
+          }
+        ]
+      },
+      "facets": {
+        "family": [
+          "bazzite"
+        ],
+        "desktop": [
+          "gnome"
+        ],
+        "edition": [
+          "desktop"
+        ],
+        "graphics": [
+          "amd-intel"
+        ],
+        "channel": [
+          "stable"
+        ],
+        "hardware": [
+          "desktop"
+        ]
+      },
+      "notices": [
+        {
+          "code": "preview-only",
+          "text": "Unofficial preset preview. Image availability and browser ISO creation are not qualified."
+        }
+      ]
+    },
+    {
+      "id": "bazzite/bazzite-deck/stable/linux/amd64",
+      "source": {
+        "kind": "preview",
+        "ref": "ghcr.io/ublue-os/bazzite-deck:stable",
+        "platform": "linux/amd64",
+        "evidence": [
+          {
+            "url": "https://raw.githubusercontent.com/ublue-os/bazzite/main/.github/workflows/build.yml",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "ref",
+              "platform",
+              "channel"
+            ]
+          },
+          {
+            "url": "https://docs.bazzite.gg/General/FAQ/",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "desktop",
+              "hardware"
+            ]
+          },
+          {
+            "url": "https://bazzite.gg/content/themes/betheme-child/script135.js",
+            "checkedAt": "2026-10-20T17:22:00Z",
+            "claims": [
+              "hardware",
+              "desktop"
+            ]
+          }
+        ]
+      },
+      "facets": {
+        "family": [
+          "bazzite"
+        ],
+        "desktop": [
+          "kde"
+        ],
+        "edition": [
+          "gaming"
+        ],
+        "graphics": [
+          "amd-intel"
+        ],
+        "channel": [
+          "stable"
+        ],
+        "hardware": [
+          "htpc",
+          "handheld"
+        ]
+      },
+      "notices": [
+        {
+          "code": "preview-only",
+          "text": "Unofficial preset preview. Image availability and browser ISO creation are not qualified."
+        },
+        {
+          "code": "gaming-hardware",
+          "text": "For handhelds, this preset is x86-only. For HTPC Gaming Mode, check the official modern AMD and Intel Arc requirements.",
+          "sourceUrl": "https://docs.bazzite.gg/Gaming/Hardware_compatibility_for_gaming/"
+        }
+      ]
+    },
+    {
+      "id": "bazzite/bazzite-deck-gnome/stable/linux/amd64",
+      "source": {
+        "kind": "preview",
+        "ref": "ghcr.io/ublue-os/bazzite-deck-gnome:stable",
+        "platform": "linux/amd64",
+        "evidence": [
+          {
+            "url": "https://raw.githubusercontent.com/ublue-os/bazzite/main/.github/workflows/build.yml",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "ref",
+              "platform",
+              "channel"
+            ]
+          },
+          {
+            "url": "https://docs.bazzite.gg/General/FAQ/",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "desktop",
+              "hardware"
+            ]
+          },
+          {
+            "url": "https://bazzite.gg/content/themes/betheme-child/script135.js",
+            "checkedAt": "2026-10-20T17:22:00Z",
+            "claims": [
+              "hardware",
+              "desktop"
+            ]
+          }
+        ]
+      },
+      "facets": {
+        "family": [
+          "bazzite"
+        ],
+        "desktop": [
+          "gnome"
+        ],
+        "edition": [
+          "gaming"
+        ],
+        "graphics": [
+          "amd-intel"
+        ],
+        "channel": [
+          "stable"
+        ],
+        "hardware": [
+          "htpc",
+          "handheld"
+        ]
+      },
+      "notices": [
+        {
+          "code": "preview-only",
+          "text": "Unofficial preset preview. Image availability and browser ISO creation are not qualified."
+        },
+        {
+          "code": "gaming-hardware",
+          "text": "For handhelds, this preset is x86-only. For HTPC Gaming Mode, check the official modern AMD and Intel Arc requirements.",
+          "sourceUrl": "https://docs.bazzite.gg/Gaming/Hardware_compatibility_for_gaming/"
+        }
+      ]
+    },
+    {
+      "id": "bazzite/bazzite-deck-nvidia/stable/linux/amd64",
+      "source": {
+        "kind": "preview",
+        "ref": "ghcr.io/ublue-os/bazzite-deck-nvidia:stable",
+        "platform": "linux/amd64",
+        "evidence": [
+          {
+            "url": "https://raw.githubusercontent.com/ublue-os/bazzite/main/.github/workflows/build.yml",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "ref",
+              "platform",
+              "channel"
+            ]
+          },
+          {
+            "url": "https://docs.bazzite.gg/General/FAQ/",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "desktop",
+              "hardware"
+            ]
+          },
+          {
+            "url": "https://bazzite.gg/content/themes/betheme-child/script135.js",
+            "checkedAt": "2026-10-20T17:22:00Z",
+            "claims": [
+              "hardware",
+              "desktop"
+            ]
+          }
+        ]
+      },
+      "facets": {
+        "family": [
+          "bazzite"
+        ],
+        "desktop": [
+          "kde"
+        ],
+        "edition": [
+          "gaming"
+        ],
+        "graphics": [
+          "nvidia"
+        ],
+        "channel": [
+          "stable"
+        ],
+        "hardware": [
+          "htpc"
+        ],
+        "graphics_generation": [
+          "modern"
+        ]
+      },
+      "notices": [
+        {
+          "code": "preview-only",
+          "text": "Unofficial preset preview. Image availability and browser ISO creation are not qualified."
+        },
+        {
+          "code": "nvidia-gaming-beta",
+          "text": "NVIDIA support for HTPC Steam Gaming Mode is beta and has known issues. I understand these limitations.",
+          "sourceUrl": "https://docs.bazzite.gg/Gaming/Hardware_compatibility_for_gaming/",
+          "requiresAcknowledgement": true
+        }
+      ]
+    },
+    {
+      "id": "bazzite/bazzite-deck-nvidia-gnome/stable/linux/amd64",
+      "source": {
+        "kind": "preview",
+        "ref": "ghcr.io/ublue-os/bazzite-deck-nvidia-gnome:stable",
+        "platform": "linux/amd64",
+        "evidence": [
+          {
+            "url": "https://raw.githubusercontent.com/ublue-os/bazzite/main/.github/workflows/build.yml",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "ref",
+              "platform",
+              "channel"
+            ]
+          },
+          {
+            "url": "https://docs.bazzite.gg/General/FAQ/",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "desktop",
+              "hardware"
+            ]
+          },
+          {
+            "url": "https://bazzite.gg/content/themes/betheme-child/script135.js",
+            "checkedAt": "2026-10-20T17:22:00Z",
+            "claims": [
+              "hardware",
+              "desktop"
+            ]
+          }
+        ]
+      },
+      "facets": {
+        "family": [
+          "bazzite"
+        ],
+        "desktop": [
+          "gnome"
+        ],
+        "edition": [
+          "gaming"
+        ],
+        "graphics": [
+          "nvidia"
+        ],
+        "channel": [
+          "stable"
+        ],
+        "hardware": [
+          "htpc"
+        ],
+        "graphics_generation": [
+          "modern"
+        ]
+      },
+      "notices": [
+        {
+          "code": "preview-only",
+          "text": "Unofficial preset preview. Image availability and browser ISO creation are not qualified."
+        },
+        {
+          "code": "nvidia-gaming-beta",
+          "text": "NVIDIA support for HTPC Steam Gaming Mode is beta and has known issues. I understand these limitations.",
+          "sourceUrl": "https://docs.bazzite.gg/Gaming/Hardware_compatibility_for_gaming/",
+          "requiresAcknowledgement": true
+        }
+      ]
+    },
+    {
+      "id": "bazzite/bazzite-nvidia/stable/linux/amd64",
+      "source": {
+        "kind": "preview",
+        "ref": "ghcr.io/ublue-os/bazzite-nvidia:stable",
+        "platform": "linux/amd64",
+        "evidence": [
+          {
+            "url": "https://raw.githubusercontent.com/ublue-os/bazzite/main/.github/workflows/build.yml",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "ref",
+              "platform",
+              "channel"
+            ]
+          },
+          {
+            "url": "https://docs.bazzite.gg/General/FAQ/",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "desktop",
+              "hardware"
+            ]
+          },
+          {
+            "url": "https://bazzite.gg/content/themes/betheme-child/script135.js",
+            "checkedAt": "2026-10-20T17:22:00Z",
+            "claims": [
+              "hardware",
+              "desktop"
+            ]
+          }
+        ]
+      },
+      "facets": {
+        "family": [
+          "bazzite"
+        ],
+        "desktop": [
+          "kde"
+        ],
+        "edition": [
+          "desktop"
+        ],
+        "graphics": [
+          "nvidia"
+        ],
+        "channel": [
+          "stable"
+        ],
+        "hardware": [
+          "desktop"
+        ],
+        "graphics_generation": [
+          "legacy"
+        ]
+      },
+      "notices": [
+        {
+          "code": "preview-only",
+          "text": "Unofficial preset preview. Image availability and browser ISO creation are not qualified."
+        }
+      ]
+    },
+    {
+      "id": "bazzite/bazzite-gnome-nvidia/stable/linux/amd64",
+      "source": {
+        "kind": "preview",
+        "ref": "ghcr.io/ublue-os/bazzite-gnome-nvidia:stable",
+        "platform": "linux/amd64",
+        "evidence": [
+          {
+            "url": "https://raw.githubusercontent.com/ublue-os/bazzite/main/.github/workflows/build.yml",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "ref",
+              "platform",
+              "channel"
+            ]
+          },
+          {
+            "url": "https://docs.bazzite.gg/General/FAQ/",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "desktop",
+              "hardware"
+            ]
+          },
+          {
+            "url": "https://bazzite.gg/content/themes/betheme-child/script135.js",
+            "checkedAt": "2026-10-20T17:22:00Z",
+            "claims": [
+              "hardware",
+              "desktop"
+            ]
+          }
+        ]
+      },
+      "facets": {
+        "family": [
+          "bazzite"
+        ],
+        "desktop": [
+          "gnome"
+        ],
+        "edition": [
+          "desktop"
+        ],
+        "graphics": [
+          "nvidia"
+        ],
+        "channel": [
+          "stable"
+        ],
+        "hardware": [
+          "desktop"
+        ],
+        "graphics_generation": [
+          "legacy"
+        ]
+      },
+      "notices": [
+        {
+          "code": "preview-only",
+          "text": "Unofficial preset preview. Image availability and browser ISO creation are not qualified."
+        }
+      ]
+    },
+    {
+      "id": "bazzite/bazzite-nvidia-open/stable/linux/amd64",
+      "source": {
+        "kind": "preview",
+        "ref": "ghcr.io/ublue-os/bazzite-nvidia-open:stable",
+        "platform": "linux/amd64",
+        "evidence": [
+          {
+            "url": "https://raw.githubusercontent.com/ublue-os/bazzite/main/.github/workflows/build.yml",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "ref",
+              "platform",
+              "channel"
+            ]
+          },
+          {
+            "url": "https://docs.bazzite.gg/General/FAQ/",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "desktop",
+              "hardware"
+            ]
+          },
+          {
+            "url": "https://bazzite.gg/content/themes/betheme-child/script135.js",
+            "checkedAt": "2026-10-20T17:22:00Z",
+            "claims": [
+              "hardware",
+              "desktop"
+            ]
+          }
+        ]
+      },
+      "facets": {
+        "family": [
+          "bazzite"
+        ],
+        "desktop": [
+          "kde"
+        ],
+        "edition": [
+          "desktop"
+        ],
+        "graphics": [
+          "nvidia"
+        ],
+        "channel": [
+          "stable"
+        ],
+        "hardware": [
+          "desktop"
+        ],
+        "graphics_generation": [
+          "modern"
+        ]
+      },
+      "notices": [
+        {
+          "code": "preview-only",
+          "text": "Unofficial preset preview. Image availability and browser ISO creation are not qualified."
+        }
+      ]
+    },
+    {
+      "id": "bazzite/bazzite-gnome-nvidia-open/stable/linux/amd64",
+      "source": {
+        "kind": "preview",
+        "ref": "ghcr.io/ublue-os/bazzite-gnome-nvidia-open:stable",
+        "platform": "linux/amd64",
+        "evidence": [
+          {
+            "url": "https://raw.githubusercontent.com/ublue-os/bazzite/main/.github/workflows/build.yml",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "ref",
+              "platform",
+              "channel"
+            ]
+          },
+          {
+            "url": "https://docs.bazzite.gg/General/FAQ/",
+            "checkedAt": "2026-10-20T16:55:00Z",
+            "claims": [
+              "desktop",
+              "hardware"
+            ]
+          },
+          {
+            "url": "https://bazzite.gg/content/themes/betheme-child/script135.js",
+            "checkedAt": "2026-10-20T17:22:00Z",
+            "claims": [
+              "hardware",
+              "desktop"
+            ]
+          }
+        ]
+      },
+      "facets": {
+        "family": [
+          "bazzite"
+        ],
+        "desktop": [
+          "gnome"
+        ],
+        "edition": [
+          "desktop"
+        ],
+        "graphics": [
+          "nvidia"
+        ],
+        "channel": [
+          "stable"
+        ],
+        "hardware": [
+          "desktop"
+        ],
+        "graphics_generation": [
+          "modern"
+        ]
+      },
+      "notices": [
+        {
+          "code": "preview-only",
+          "text": "Unofficial preset preview. Image availability and browser ISO creation are not qualified."
+        }
+      ]
+    }
+  ]
+}
