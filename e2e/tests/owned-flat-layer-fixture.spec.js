@@ -120,7 +120,7 @@ test("owned collector real Chromium unchanged production layerworker cold warm s
       const bytes = await fs.readFile(path.join(__dirname,"..","..","app","public",name));
       if (bytes.length > 65536) throw bad("source-bound"); assets["/"+name] = bytes;
     }
-    owned = await launchOwnedChromium({ boundedBodies:true }); prerequisites = owned.prerequisites; provenance = owned.provenance;
+    owned = await launchOwnedChromium({ boundedBodies:true, suppressComponentBackgroundExtensions:true }); prerequisites = owned.prerequisites; provenance = owned.provenance;
     frontend = http.createServer((request,response) => {
       const bytes = assets[request.url];
       if (request.url === "/favicon.ico") { response.writeHead(204,{"Content-Length":"0"}); response.end(); return; }

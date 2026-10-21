@@ -102,10 +102,14 @@ async function verifyEndpoint(profile, child, expected, executable) {
   }
   return endpoint;
 }
-function launchArguments(profile) {
+function launchArguments(profile, { suppressComponentBackgroundExtensions = false } = {}) {
+  if (typeof suppressComponentBackgroundExtensions !== "boolean") throw problem("component-profile-invalid");
   // Keep Chromium's sandbox intact. A runner sandbox failure is a failed test.
   return ["--headless=new", "--no-startup-window", "--no-first-run", "--no-default-browser-check",
-    "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0", `--user-data-dir=${profile}`];
+    "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0", `--user-data-dir=${profile}`,
+    // Official Playwright 1.64.1 test setup. Chromium 156 component_loader.cc
+    // skips bundled background components; this does not relax its sandbox.
+    ...(suppressComponentBackgroundExtensions ? ["--disable-component-extensions-with-background-pages"] : [])];
 }
 async function readLaunchPin() {
   const { chromium } = require("@playwright/test");
@@ -183,12 +187,12 @@ async function freshProfileObservation(profile, io = {}) {
   return result;
 }
 function launchPolicyObservation(args) {
-  const has = flag => args.some(arg => arg === flag || arg.startsWith(flag + "="));
+  const has = flag => Array.isArray(args) ? args.some(arg => typeof arg === "string" && (arg === flag || arg.startsWith(flag + "="))) : null;
   return Object.freeze({ componentBackgroundDisabled: has("--disable-component-extensions-with-background-pages"),
     extensionsDisabled: has("--disable-extensions"), componentUpdatesDisabled: has("--disable-component-update"),
     testType: has("--test-type"), loadExtension: has("--load-extension"), hostPolicyInspection: "not-performed" });
 }
-function launchProvenance(pin, executable, profile, product) {
+function launchProvenance(pin, executable, profile, product, actualArgs) {
   return Object.freeze({ profile: "owned-launch-provenance-diagnostic-v1",
     playwrightVersion: pin?.playwrightVersion === "1.64.1" ? "1.64.1" : null,
     browserRevision: pin?.browserRevision === "1248" ? "1248" : null,
@@ -196,7 +200,7 @@ function launchProvenance(pin, executable, profile, product) {
     declaredBrowserVersion: pin?.browserVersion === "156.0.8078.4" ? "156.0.8078.4" : null,
     observedProduct: ["Chrome/156.0.8078.4", "HeadlessChrome/156.0.8078.4"].includes(product) ? product : null,
     executable: executable || emptyExecutable("unavailable"), freshProfile: profile || Object.freeze({ status: "unavailable", empty: null,
-      ownedByEffectiveUid: null, mode: null, stableIdentity: null }), launchPolicy: launchPolicyObservation(launchArguments("")) });
+      ownedByEffectiveUid: null, mode: null, stableIdentity: null }), launchPolicy: launchPolicyObservation(actualArgs) });
 }
 const provenanceErrors = new WeakMap();
 function launchProvenanceFor(error) { return provenanceErrors.get(error) || null; }
@@ -395,9 +399,9 @@ async function closeOwnedChannels(connection, socket, boundedBodies = false) {
   } catch { closeFailed = true; }
   if (boundedBodies && (priorFailure || socket?.failure || closeFailed)) throw problem("channel-cleanup-failed");
 }
-async function launchOwnedChromium({ boundedBodies = false } = {}) {
+async function launchOwnedChromium({ boundedBodies = false, suppressComponentBackgroundExtensions = false } = {}) {
   let pin, profile, child, identity, connection, socket, endpoint, exited, stderr = "", stderrTruncated = false, prerequisites, stopping = false, cleanupPromise;
-  let executableFacts, profileFacts, observedProduct;
+  let executableFacts, profileFacts, observedProduct, actualArgs;
   const cleanup = () => cleanupPromise ||= (async () => {
     stopping = true;
     let channelFailure;
@@ -417,6 +421,7 @@ async function launchOwnedChromium({ boundedBodies = false } = {}) {
   })();
   try {
     if (typeof boundedBodies !== "boolean") throw problem("body-profile-invalid");
+    if (typeof suppressComponentBackgroundExtensions !== "boolean") throw problem("component-profile-invalid");
     if (process.platform !== "linux" || (!boundedBodies && typeof globalThis.WebSocket !== "function")) throw problem("unsupported-host");
     pin = await readLaunchPin();
     prerequisites = await collectLaunchPrerequisites(pin.executable);
@@ -425,7 +430,8 @@ async function launchOwnedChromium({ boundedBodies = false } = {}) {
     profileFacts = await freshProfileObservation(profile);
     const env = Object.fromEntries(["PATH", "HOME", "LANG", "LC_ALL", "TZ", "TMPDIR", "XDG_RUNTIME_DIR"]
       .filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
-    child = spawn(pin.executable.realpath, launchArguments(profile), { env, detached: true, stdio: ["ignore", "ignore", "pipe"] });
+    actualArgs = Object.freeze(launchArguments(profile, { suppressComponentBackgroundExtensions }));
+    child = spawn(pin.executable.realpath, actualArgs, { env, detached: true, stdio: ["ignore", "ignore", "pipe"] });
     exited = new Promise(resolve => child.once("exit", () => { connection?.fail("browser-exited"); resolve(); }));
     child.on("error", () => connection?.fail("browser-process-error"));
     child.stderr.on("data", bytes => {
@@ -474,11 +480,11 @@ async function launchOwnedChromium({ boundedBodies = false } = {}) {
       throw problem("observed-browser-pin-mismatch");
     }
     observedProduct = version.product;
-    return { connection, pin, prerequisites, provenance: launchProvenance(pin, executableFacts, profileFacts, observedProduct), verify: async () => { try { await verify(); } catch (error) { throw safeError(error, "endpoint-recheck-failed"); } }, close: cleanup };
+    return { connection, pin, prerequisites, provenance: launchProvenance(pin, executableFacts, profileFacts, observedProduct, actualArgs), verify: async () => { try { await verify(); } catch (error) { throw safeError(error, "endpoint-recheck-failed"); } }, close: cleanup };
   } catch (error) {
     prerequisites ||= await collectLaunchPrerequisites(pin?.executable);
-    try { await cleanup(); } catch (cleanupError) { throw attachLaunchProvenance(attachPrerequisites(cleanupError, prerequisites, stderr, stderrTruncated), launchProvenance(pin, executableFacts, profileFacts, observedProduct)); }
-    throw attachLaunchProvenance(attachPrerequisites(error, prerequisites, stderr, stderrTruncated), launchProvenance(pin, executableFacts, profileFacts, observedProduct));
+    try { await cleanup(); } catch (cleanupError) { throw attachLaunchProvenance(attachPrerequisites(cleanupError, prerequisites, stderr, stderrTruncated), launchProvenance(pin, executableFacts, profileFacts, observedProduct, actualArgs)); }
+    throw attachLaunchProvenance(attachPrerequisites(error, prerequisites, stderr, stderrTruncated), launchProvenance(pin, executableFacts, profileFacts, observedProduct, actualArgs));
   }
 }
 function safeError(error, fallback) {

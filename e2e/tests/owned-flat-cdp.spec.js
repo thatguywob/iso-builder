@@ -959,3 +959,34 @@ test("profile close failure downgrades otherwise observed empty directory",async
  expect(closed).toBe(true);expect(report).toEqual({status:"unavailable",empty:null,ownedByEffectiveUid:null,mode:null,stableIdentity:null});
  expect(JSON.stringify(report)).not.toContain("SECRET");expect(Object.isFrozen(report)).toBe(true);
 });
+
+
+// Falsification: the opt-in fixture setting cannot change sandbox/security
+// flags, invent an applied control, or admit any pre-existing target.
+test("component-background suppression is an explicit one-flag test option",()=>{
+ const base=launchArguments("SECRET_PROFILE"), suppressed=launchArguments("SECRET_PROFILE",{suppressComponentBackgroundExtensions:true});
+ expect(suppressed).toEqual([...base,"--disable-component-extensions-with-background-pages"]);
+ expect(base).not.toContain("--disable-component-extensions-with-background-pages");
+ expect(suppressed.some(arg=>/no-sandbox|disable-setuid-sandbox|disable-web-security|remote-allow-origins|disable-extensions$/.test(arg))).toBe(false);
+});
+for(const [index,value] of ["true",1,null,{}].entries())test(`component fixture option rejects nonboolean ${index}`,()=>{
+ expect(()=>launchArguments("SECRET",{suppressComponentBackgroundExtensions:value})).toThrow(/^owned-cdp:component-profile-invalid$/);
+});
+test("launch provenance reports actual passed argument set rather than current defaults",()=>{
+ const actual=Object.freeze(launchArguments("SECRET",{suppressComponentBackgroundExtensions:true}));
+ const report=launchProvenance(null,null,null,null,actual);
+ expect(report.launchPolicy).toEqual({componentBackgroundDisabled:true,extensionsDisabled:false,componentUpdatesDisabled:false,testType:false,loadExtension:false,hostPolicyInspection:"not-performed"});
+ expect(JSON.stringify(report)).not.toContain("SECRET");expect(Object.isFrozen(report.launchPolicy)).toBe(true);
+ expect(launchProvenance(null,null,null,null,[]).launchPolicy.componentBackgroundDisabled).toBe(false);
+});
+test("pre-spawn failure provenance has unknown applied flags",()=>{
+ const report=launchProvenance(null,null,null,null);
+ expect(report.launchPolicy).toEqual({componentBackgroundDisabled:null,extensionsDisabled:null,componentUpdatesDisabled:null,testType:null,loadExtension:null,hostPolicyInspection:"not-performed"});
+});
+test("production-layer real fixture alone opts in and launcher passes the same captured arguments",async()=>{
+ const fixture=await fs.readFile(path.join(__dirname,"owned-flat-layer-fixture.spec.js"),"utf8");
+ expect(fixture).toContain("launchOwnedChromium({ boundedBodies:true, suppressComponentBackgroundExtensions:true })");
+ const launcher=await fs.readFile(path.join(__dirname,"owned-flat-cdp.js"),"utf8");
+ expect(launcher).toContain("child = spawn(pin.executable.realpath, actualArgs,");
+ expect(launcher).toContain("launchProvenance(pin, executableFacts, profileFacts, observedProduct, actualArgs)");
+});
