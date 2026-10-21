@@ -28,7 +28,7 @@ const COMPONENTS = Object.freeze({
 });
 function targetURLObservation(value) {
   const unknown = { scheme: "invalid", canonicalExtensionId: null, knownComponent: "unavailable", exactKnownWorkerPath: null,
-    credentialsPresent: null, queryPresent: null, fragmentPresent: null, internalHost: null, internalPathSha256: null };
+    credentialsPresent: null, queryPresent: null, fragmentPresent: null, internalHost: null, internalPathSha256: null, browserImplementation: null };
   if (typeof value !== "string" || !value || value.length > 4096) return Object.freeze({ ...unknown, scheme: value === undefined ? "missing" : "invalid" });
   try {
     const url = new URL(value), protocol = url.protocol.slice(0, -1);
@@ -45,7 +45,10 @@ function targetURLObservation(value) {
     return Object.freeze({ scheme, canonicalExtensionId: canonicalExtension ? url.hostname : null, knownComponent: component?.label || (scheme === "chrome-extension" ? "unknown-extension" : "not-extension"),
       exactKnownWorkerPath: component ? url.pathname === component.worker && !queryPresent && !fragmentPresent : null,
       credentialsPresent, queryPresent, fragmentPresent, internalHost: canonicalInternal ? url.hostname : null,
-      internalPathSha256: canonicalInternal ? `sha256:${crypto.createHash("sha256").update(url.pathname).digest("hex")}` : null });
+      internalPathSha256: canonicalInternal ? `sha256:${crypto.createHash("sha256").update(url.pathname).digest("hex")}` : null,
+      // Chromium f842f52 webui_url_constants.h249-252, diagnostics only.
+      browserImplementation: canonicalInternal && scheme === "chrome" && url.hostname === "omnibox-popup.top-chrome" && !queryPresent && !fragmentPresent ?
+        url.pathname === "/" ? "omnibox-popup" : url.pathname === "/omnibox_popup_aim.html" ? "omnibox-popup-aim" : null : null });
   } catch { return Object.freeze(unknown); }
 }
 
@@ -71,7 +74,9 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
   let rejectLoaded;
   let context, page, pageTarget, frame, navigationFrame, runtimeContext, state, failure, stopped = false, closing = false, cleanup, pageLoaded = false;
   let eventCount = 0, documentRequests = 0; const frames = new Set(), attachedWorkers = new Map(), discovered = new Map();
-  let stage = "verify-owned", sequence = 0, dropped = 0, aliasOverflow = false;
+  let stage = "verify-owned", sequence = 0, dropped = 0, aliasOverflow = false, creationReplied = false;
+  const diagnosticTargets = new Set(); let diagnosticTargetOverflow = false;
+  let reconciliationStatus = "not-run", reconciliationRequested = 0; const reconciledTargets = [];
   const trace = [], aliases = new Map();
   const alias = value => {
     if (!(id(value) || Number.isSafeInteger(value) && value >= 0)) return null;
@@ -104,6 +109,8 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
   };
   const snapshot = reason => Object.freeze({ profile: "owned-controller-startup-diagnostic-v1", stage, reason, latchedReason: reasons.get(failure) || null,
     transport: c.diagnostics?.() || null, lifecycle: owned.lifecycle?.() || null,
+    targetReconciliation: Object.freeze({ status: reconciliationStatus, requested: reconciliationRequested,
+      targetOverflow: diagnosticTargetOverflow, results: Object.freeze([...reconciledTargets]) }),
     contextCreated: !!context, pageAttached: !!page, frameObserved: !!frame, navigationIssued,
     runtimeContextSeen: !!runtimeContext, runtimeFrameMatches: !!runtimeContext && !!frame && runtimeContext.frame === frame,
     navigationFrameMatches: !!frame && !!navigationFrame && frame === navigationFrame,
@@ -116,6 +123,7 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
     check(); const command = COMMANDS.has(method) ? method : "other", owner = alias(session);
     note({ kind: "command", command, outcome: "sent", session: owner, commandBrowserContext: alias(params.browserContextId) });
     return c.send(method, params, session).then(value => {
+      if (method === "Target.createTarget") creationReplied = true;
       note({ kind: "command", command, outcome: "acknowledged", session: owner,
         replyTarget: alias(value?.targetId), replyContext: alias(value?.browserContextId), replyFrame: alias(value?.frameTree?.frame?.id),
         frameURLKind: urlKind(value?.frameTree?.frame?.url), childFramesPresent: Array.isArray(value?.frameTree?.childFrames) ? value.frameTree.childFrames.length > 0 : null,
@@ -131,6 +139,11 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
       // Stream data progress is not retained or treated as executable evidence.
       // The tiny diagnostic cap applies only to retained/control/lifecycle events.
       if (method === "Network.dataReceived") return;
+      if (["Target.targetCreated", "Target.targetInfoChanged", "Target.attachedToTarget"].includes(method) &&
+          typeof p.targetInfo?.targetId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(p.targetInfo.targetId)) {
+        if (diagnosticTargets.size < 8 || diagnosticTargets.has(p.targetInfo.targetId)) diagnosticTargets.add(p.targetInfo.targetId);
+        else diagnosticTargetOverflow = true;
+      }
       note({ kind: "event", event: EVENTS.has(method) ? method : "other", session: alias(session), afterFailure: !!failure,
         request: alias(p.requestId), target: alias(p.targetInfo?.targetId ?? p.targetId), parent: alias(p.targetInfo?.parentId),
         opener: alias(p.targetInfo?.openerId), openerFrame: alias(p.targetInfo?.openerFrameId), parentFrame: alias(p.targetInfo?.parentFrameId),
@@ -214,6 +227,30 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
       if (packet.method === "Target.attachedToTarget") note({ kind: "attachment", outcome: "rejected", session: alias(packet.params?.sessionId), target: alias(packet.params?.targetInfo?.targetId) });
       fail(reasons.get(error) || "event-invalid");
     }
+  };
+  // Terminal diagnostics only: never use these replies to admit or resume a
+  // target. One serial read per already observed ID, at most eight, with one
+  // total deadline. No sleep/poll, new attachment, navigation or replacement ID.
+  const reconcileRejectedCreation = async () => {
+    if (!creationReplied || !failure || navigationIssued || c.failure || c.closed) return;
+    const ids = [...diagnosticTargets]; let accepting = true;
+    reconciliationStatus = "running";
+    try {
+      await deadline((async () => {
+        for (const targetId of ids) {
+          if (!accepting || c.failure || c.closed) return;
+          reconciliationRequested++;
+          const result = await c.send("Target.getTargetInfo", { targetId });
+          if (!accepting) return;
+          reconciledTargets.push(Object.freeze({ requestedTarget: alias(targetId),
+            replyMatchesRequested: result?.targetInfo?.targetId === targetId,
+            target: targetInventory({ targetInfos: [result?.targetInfo] }).targets[0] }));
+        }
+      })(), 1000, "target-reconciliation-timeout");
+      reconciliationStatus = reconciledTargets.length === ids.length ? "observed" : "partial";
+    } catch (error) {
+      reconciliationStatus = error?.message === "owned-cdp:target-reconciliation-timeout" ? "timeout" : "unavailable";
+    } finally { accepting = false; }
   };
   const onFailure = () => { if (!(closing && c.failure?.message === "owned-cdp:transport-disposed")) fail("transport-failed"); };
   c.on("event", onEvent); c.on("failure", onFailure);
@@ -312,8 +349,11 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
     });
   } catch (error) {
     fail(reasons.get(error) || "setup-failed");
-    causes.set(failure, error); diagnostics.set(failure, snapshot(reasons.get(error) || "external-error"));
-    await close(); throw failure;
+    causes.set(failure, error);
+    await reconcileRejectedCreation();
+    try { await close(); }
+    finally { diagnostics.set(failure, snapshot(reasons.get(error) || "external-error")); }
+    throw failure;
   }
 }
 module.exports = { openOwnedFrontendController, controllerDiagnosticsFor };

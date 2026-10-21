@@ -249,7 +249,7 @@ async function observedTargetURL(url){const f=fixture();f.socket.inventoryReply=
  expect(f.socket.calls.some(c=>c.method === "Target.createBrowserContext")).toBe(false);return report.trace.at(-1).targetInventory.targets[0].urlFacts;}
 for(const [label,host,worker] of componentExamples)test(`public ${label} component is diagnosed while startup remains rejected`,async()=>{
  const facts=await observedTargetURL(`chrome-extension://${host}/${worker}`);
- expect(facts).toEqual({scheme:"chrome-extension",canonicalExtensionId:host,knownComponent:label,exactKnownWorkerPath:true,credentialsPresent:false,queryPresent:false,fragmentPresent:false,internalHost:null,internalPathSha256:null});expect(Object.isFrozen(facts)).toBe(true);
+ expect(facts).toEqual({scheme:"chrome-extension",canonicalExtensionId:host,knownComponent:label,exactKnownWorkerPath:true,credentialsPresent:false,queryPresent:false,fragmentPresent:false,internalHost:null,internalPathSha256:null,browserImplementation:null});expect(Object.isFrozen(facts)).toBe(true);
 });
 for(const [name,url,scheme,label,worker] of [
  ["unknown","chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/SECRET","chrome-extension","unknown-extension",null],
@@ -405,4 +405,92 @@ for (const method of ["Target.targetDestroyed", "Target.targetCrashed", "Target.
   expect(ended.target).toBe(created.target); expect(ended.target).toMatch(/^i[0-9]+$/); expect(ended.afterFailure).toBe(true);
   expect(report.latchedReason).toBe("unsupported-target-census"); expect(JSON.stringify(report)).not.toContain("SECRET");
   expect(f.socket.calls.some(item => /runIfWaiting|resume|getResponseBody|Page.navigate/.test(item.method))).toBe(false);
+});
+
+// Falsification: terminal target reads cannot clear the rejection, navigate,
+// resume, attach, substitute IDs, grow without bound or continue after timeout.
+function rejectedCreationWithReadback(f, responder, extras = []) {
+ const send = f.socket.send.bind(f.socket);
+ f.socket.send = text => {
+  const packet = JSON.parse(text);
+  if (packet.method === 'Target.createTarget') {
+   f.socket.event('Target.targetCreated', {targetInfo:{targetId:'transient',type:'other',url:'',browserContextId:'context'}});
+   for (const target of extras) f.socket.event('Target.targetCreated', {targetInfo:target});
+  }
+  if (packet.method === 'Target.getTargetInfo') {
+   f.socket.calls.push(packet); responder(packet, f.socket); return;
+  }
+  send(text);
+ };
+}
+const targetReply = (packet, socket, targetInfo) => queueMicrotask(() => socket.emit('message', {data:JSON.stringify({id:packet.id,result:{targetInfo}})}));
+test('terminal readback resolves existing IDs without admitting the target model', async () => {
+ const f=fixture();rejectedCreationWithReadback(f,(p,s)=>targetReply(p,s,{targetId:p.params.targetId,type:p.params.targetId==='transient'?'browser_ui':'page',
+  browserContextId:'context',url:p.params.targetId==='transient'?'chrome://omnibox-popup.top-chrome/omnibox_popup_aim.html':'about:blank',attached:false}));
+ const error=await rejected(f.open()),report=controllerDiagnosticsFor(error),reads=f.socket.calls.filter(p=>p.method==='Target.getTargetInfo');
+ expect(report.latchedReason).toBe('unsupported-target-census');expect(error.message).toBe('owned-controller:unsupported-target-census');
+ expect(report.targetReconciliation).toMatchObject({status:'observed',requested:2,targetOverflow:false});
+ expect(reads.map(p=>p.params.targetId)).toEqual(['transient','page-target']);expect(reads.every(p=>p.sessionId===undefined)).toBe(true);
+ expect(report.targetReconciliation.results[0]).toMatchObject({replyMatchesRequested:true,target:{type:'browser_ui',contextOwnedMatch:true,urlFacts:{browserImplementation:'omnibox-popup-aim'}}});
+ expect(report.pageAttached).toBe(false);expect(report.navigationIssued).toBe(false);
+ expect(f.socket.calls.some(p=>/runIfWaiting|resume|attachToTarget|getResponseBody|Page.navigate/.test(p.method))).toBe(false);
+ expect(report.transport.firstFailure.reason).toBe('transport-disposed');expect(f.connection.closed).toBe(true);
+ expect(Object.isFrozen(report.targetReconciliation)).toBe(true);expect(Object.isFrozen(report.targetReconciliation.results)).toBe(true);
+});
+for(const mode of ['missing','mismatch','wrong-context','still-other','unknown-url'])test(`terminal readback ${mode} stays diagnostic and rejected`,async()=>{
+ const f=fixture();rejectedCreationWithReadback(f,(p,s)=>targetReply(p,s,mode==='missing'?undefined:{targetId:mode==='mismatch'?'SECRET_FOREIGN':p.params.targetId,
+  type:mode==='still-other'?'other':'browser_ui',browserContextId:mode==='wrong-context'?'SECRET_FOREIGN':'context',
+  url:mode==='unknown-url'?'https://SECRET.invalid/BODY_SECRET':mode==='still-other'?'':'chrome://omnibox-popup.top-chrome/'}));
+ const report=controllerDiagnosticsFor(await rejected(f.open()));expect(report.latchedReason).toBe('unsupported-target-census');expect(report.navigationIssued).toBe(false);
+ expect(report.targetReconciliation.requested).toBe(2);expect(report.targetReconciliation.results[0].replyMatchesRequested).toBe(!['missing','mismatch'].includes(mode));
+ expect(JSON.stringify(report)).not.toContain('SECRET');expect(f.connection.closed).toBe(true);
+});
+test('terminal reads retain eight IDs maximum and do not query IDs arriving during readback',async()=>{
+ const f=fixture(),extra=Array.from({length:20},(_,i)=>({targetId:'extra_'+i,type:'other',url:'',browserContextId:'context'}));
+ rejectedCreationWithReadback(f,(p,s)=>{s.event('Target.targetCreated',{targetInfo:{targetId:'late_extra',type:'other',url:'',browserContextId:'context'}});
+  targetReply(p,s,{targetId:p.params.targetId,type:'other',url:'',browserContextId:'context'});},extra);
+ const report=controllerDiagnosticsFor(await rejected(f.open())),reads=f.socket.calls.filter(p=>p.method==='Target.getTargetInfo');
+ expect(reads).toHaveLength(8);expect(new Set(reads.map(p=>p.params.targetId)).size).toBe(8);expect(reads.some(p=>p.params.targetId==='late_extra')).toBe(false);
+ expect(report.targetReconciliation).toMatchObject({status:'observed',requested:8,targetOverflow:true});expect(report.targetReconciliation.results).toHaveLength(8);
+ expect(report.trace.length).toBeLessThanOrEqual(64);expect(JSON.stringify(report).length).toBeLessThan(128*1024);
+});
+test('terminal reconciliation stops on command rejection without changing first census failure',async()=>{
+ const f=fixture();rejectedCreationWithReadback(f,(p,s)=>queueMicrotask(()=>s.emit('message',{data:JSON.stringify({id:p.id,error:{code:-32000,message:'SECRET'}})})));
+ const report=controllerDiagnosticsFor(await rejected(f.open()));expect(report.latchedReason).toBe('unsupported-target-census');
+ expect(report.targetReconciliation).toMatchObject({status:'unavailable',requested:1});expect(f.socket.calls.filter(p=>p.method==='Target.getTargetInfo')).toHaveLength(1);
+ expect(report.transport.firstFailure).toMatchObject({reason:'command-rejected',command:{method:'Target.getTargetInfo',protocolCode:-32000,messageCategory:'unknown'}});
+ expect(JSON.stringify(report)).not.toContain('SECRET');expect(f.connection.closed).toBe(true);
+});
+test('terminal reconciliation total deadline closes transport and dispatches no later reads',async()=>{
+ const f=fixture();f.connection.commandMs=3000;let dropped;
+ rejectedCreationWithReadback(f,(p,s)=>{dropped={p,s};});
+ const started=Date.now(),report=controllerDiagnosticsFor(await rejected(f.open()));
+ expect(report.targetReconciliation).toMatchObject({status:'timeout',requested:1});expect(Date.now()-started).toBeLessThan(2000);expect(f.connection.closed).toBe(true);
+ targetReply(dropped.p,dropped.s,{targetId:'transient',type:'browser_ui',url:'chrome://omnibox-popup.top-chrome/',browserContextId:'context'});await tick();
+ expect(f.socket.calls.filter(p=>p.method==='Target.getTargetInfo')).toHaveLength(1);expect(report.targetReconciliation.results).toHaveLength(0);
+});
+test('terminal readback never runs without creation acknowledgement or after navigation',async()=>{
+ const initial=fixture('initial-target');await rejected(initial.open());expect(initial.socket.calls.some(p=>p.method==='Target.getTargetInfo')).toBe(false);
+ const failed=fixture();failed.socket.failMethod='Target.createTarget';await rejected(failed.open());expect(failed.socket.calls.some(p=>p.method==='Target.getTargetInfo')).toBe(false);
+ const active=fixture(),controller=await active.open();active.socket.event('Page.frameAttached',{},'page');await rejected(controller.finish());
+ expect(active.socket.calls.some(p=>p.method==='Target.getTargetInfo')).toBe(false);
+});
+for(const [index,[url,label]] of [
+ ['chrome://omnibox-popup.top-chrome/','omnibox-popup'],['chrome://omnibox-popup.top-chrome/omnibox_popup_aim.html','omnibox-popup-aim'],
+ ['chrome://omnibox-popup.top-chrome/?SECRET',null],['chrome://omnibox-popup.top-chrome/#SECRET',null],
+ ['chrome-untrusted://omnibox-popup.top-chrome/',null],['chrome://omnibox-popup.top-chrome/SECRET',null],
+ ['chrome://omnibox-popup.top-chrome.evil/',null],['https://omnibox-popup.top-chrome/',null]
+].entries())test(`source-derived omnibox label ${index} ${label||'unknown'}`,async()=>{
+ const facts=await observedTargetURL(url);expect(facts.browserImplementation).toBe(label);expect(JSON.stringify(facts)).not.toContain('SECRET');
+});
+
+test('terminal reconciliation marks partial when the transport fails between reads',async()=>{
+ const f=fixture();rejectedCreationWithReadback(f,(p,s)=>queueMicrotask(()=>{
+  s.emit('message',{data:JSON.stringify({id:p.id,result:{targetInfo:{targetId:p.params.targetId,type:'other',url:'',browserContextId:'context'}}})});
+  f.connection.fail('browser-exited');
+ }));
+ const report=controllerDiagnosticsFor(await rejected(f.open()));
+ expect(report.targetReconciliation).toMatchObject({status:'partial',requested:1});expect(report.targetReconciliation.results).toHaveLength(1);
+ expect(report.transport.firstFailure.reason).toBe('browser-exited');expect(report.latchedReason).toBe('unsupported-target-census');
+ expect(f.socket.calls.filter(p=>p.method==='Target.getTargetInfo')).toHaveLength(1);
 });
