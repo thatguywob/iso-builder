@@ -7,7 +7,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const http = require("node:http");
 const crypto = require("node:crypto");
-const { launchOwnedChromium, deadline, prerequisiteDiagnosticsFor, launchProvenanceFor } = require("./owned-flat-cdp");
+const { launchOwnedChromium, deadline, prerequisiteDiagnosticsFor, launchProvenanceFor, launchLifecycleFor, launchLifecycleObservation, FlatConnection } = require("./owned-flat-cdp");
 const { runHiddenPageProbe, diagnosticsFor, createDirectory, removeDirectory, readDownload, OPFS, DOWNLOAD } = require("./owned-flat-hidden-page");
 const ORIGIN = "http://127.0.0.1:1234", GUID = "01234567-89ab-cdef-0123-456789abcdef";
 const digest = bytes => `sha256:${crypto.createHash("sha256").update(bytes).digest("hex")}`;
@@ -135,7 +135,7 @@ for (const mode of ["changed-stat", "replaced-path", "close-failed"]) test(`save
 });
 
 test("owned hidden page real Chromium exact paused target OPFS and completed saved download", async () => {
-  test.setTimeout(40000); let owned, server, result, failure, prerequisites = null, provenance = null, report = null;
+  test.setTimeout(40000); let owned, server, result, failure, prerequisites = null, provenance = null, lifecycle = null, report = null;
   const requests = { document: 0, download: 0, rejected: 0 };
   try {
     server = http.createServer((request, response) => {
@@ -153,13 +153,44 @@ test("owned hidden page real Chromium exact paused target OPFS and completed sav
     expect(requests).toEqual({ document: 1, download: 1, rejected: 0 });
     expect(result).toMatchObject({ success: true, targetBound: true, opfsMeasured: true, downloadCompleted: true, terminalCleanupVerified: true, completeCoverage: false, collectorProofEstablished: false });
   } catch (error) {
-    prerequisites ||= prerequisiteDiagnosticsFor(error); provenance ||= launchProvenanceFor(error); report = diagnosticsFor(error);
+    prerequisites ||= prerequisiteDiagnosticsFor(error); provenance ||= launchProvenanceFor(error); lifecycle ||= launchLifecycleFor(error); report = diagnosticsFor(error);
     failure = new Error("owned-hidden-page:real-capability-failed");
   } finally {
     try { if (owned) await owned.close(); } catch { failure ||= new Error("owned-hidden-page:cleanup-failed"); }
     if (server) { server.closeAllConnections(); try { await deadline(new Promise(resolve => server.close(resolve)), 1000, "hidden-server-close-timeout"); } catch { failure ||= new Error("owned-hidden-page:server-cleanup-failed"); } }
-    console.log(`OWNED_HIDDEN_PAGE_CAPABILITY ${JSON.stringify({ success: !failure, observation: result || report, prerequisites, provenance, requests,
+    console.log(`OWNED_HIDDEN_PAGE_CAPABILITY ${JSON.stringify({ success: !failure, observation: result || report, prerequisites, provenance, lifecycle: owned?.lifecycle?.() || lifecycle, requests,
       completeCoverage: false, collectorProofEstablished: false })}`);
   }
   if (failure) throw failure;
+});
+
+// Falsification: a rejected command plus later cleanup failure must preserve
+// both original fixed causes without exposing either raw exception or data.
+test("hidden rejection report retains first protocol category and separate cleanup failure", async () => {
+  const f = fixture(), send = f.c.send.bind(f.c);
+  const socket = new EventEmitter(); socket.addEventListener = socket.on.bind(socket); socket.close = () => {};
+  socket.send = text => { const packet = JSON.parse(text); socket.emit("message", { data: JSON.stringify({ id: packet.id,
+    error: { code: -32000, message: "Hidden target can be created only when remote debugging is enabled", data: "SECRET" } }) }); };
+  const transport = new FlatConnection(socket); f.c.diagnostics = () => transport.diagnostics();
+  f.c.send = async (...args) => {
+    if (args[0] !== "Target.createTarget") return send(...args);
+    try { await transport.send(...args); } catch (error) { f.c.failure = error; f.c.emit("failure", error); throw error; }
+  };
+  f.owned.close = async () => { f.c.closed = true; throw Error("owned-cdp:cleanup-listener-survived"); };
+  f.io.removeDirectory = async () => { throw Error("SECRET directory cleanup"); };
+  f.owned.lifecycle = () => launchLifecycleObservation({ child: { exitCode: 0, signalCode: null }, exitObserved: true,
+    exitPhase: "during-cleanup", cleanupStatus: "failed", cleanupFailure: "cleanup-listener-survived" });
+  const error = await rejected(f.run()), report = diagnosticsFor(error);
+  expect(report.reason).toBe("transport-failed"); expect(report.firstCleanupFailure).toBe("cleanup-listener-survived");
+  expect(report.transport.firstFailure).toEqual({ reason: "command-rejected", command: { method: "Target.createTarget", protocolCode: -32000, messageCategory: "hidden-remote-debugging-required" } });
+  expect(report.lifecycle).toMatchObject({ exitObserved: true, exitPhase: "during-cleanup", firstCleanupFailure: "cleanup-listener-survived" });
+  expect(report).toMatchObject({ success: false, targetBound: false, opfsMeasured: false, downloadCompleted: false, terminalCleanupVerified: false, completeCoverage: false });
+  expect(JSON.stringify(report) + error.stack).not.toContain("SECRET");
+  expect(f.c.calls.some(item => /Page.navigate|Runtime.evaluate|runIfWaiting/.test(item.method))).toBe(false); transport.close();
+});
+test("hidden cleanup unknown exception stays fixed without replacing initial probe rejection", async () => {
+  const f = fixture("creation-failed"); f.owned.close = async () => { throw Error("https://SECRET.invalid/path?token=SECRET"); };
+  const report = diagnosticsFor(await rejected(f.run()));
+  expect(report.reason).toBe("stage-failed"); expect(report.firstCleanupFailure).toBe("other");
+  expect(report.transport).toBe(null); expect(report.lifecycle).toBe(null); expect(JSON.stringify(report)).not.toContain("SECRET");
 });

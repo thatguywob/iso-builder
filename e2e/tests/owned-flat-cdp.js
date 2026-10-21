@@ -206,6 +206,52 @@ const provenanceErrors = new WeakMap();
 function launchProvenanceFor(error) { return provenanceErrors.get(error) || null; }
 function attachLaunchProvenance(error, provenance) { provenanceErrors.set(error, provenance); return error; }
 
+// Fixed diagnostics only. Protocol text/data, session IDs and process paths
+// never leave this boundary. These labels explain rejection, not admission.
+const DIAGNOSTIC_METHODS = new Set(["Browser.getVersion", "Browser.setDownloadBehavior", "Target.getTargets", "Target.getTargetInfo",
+  "Target.setDiscoverTargets", "Target.createBrowserContext", "Target.setAutoAttach", "Target.createTarget", "Target.closeTarget",
+  "Page.enable", "Page.getFrameTree", "Page.navigate", "Runtime.enable", "Runtime.evaluate", "Runtime.runIfWaitingForDebugger",
+  "Network.enable", "Network.setCacheDisabled", "Network.setBypassServiceWorker", "Network.getResponseBody", "Fetch.enable",
+  "Fetch.getResponseBody", "Fetch.continueRequest", "Fetch.continueResponse", "Debugger.enable", "Debugger.getScriptSource",
+  "Debugger.setInstrumentationBreakpoint", "Debugger.removeBreakpoint", "Debugger.resume"]);
+const DIAGNOSTIC_CODES = new Set(["command-rejected", "command-timeout", "command-send-failed", "transport-closed", "transport-error",
+  "transport-disposed", "browser-exited", "browser-process-error", "frame-bound", "frame-json-invalid", "frame-shape-invalid",
+  "reply-ownership-mismatch", "unreserved-large-reply", "body-reply-invalid", "reply-shape-invalid", "unreserved-large-event",
+  "event-shape-invalid", "pending-bound", "channel-cleanup-failed", "cleanup-process-ownership-lost", "cleanup-term-timeout",
+  "cleanup-kill-timeout", "cleanup-exit-unobserved", "cleanup-preidentity-unverified", "cleanup-listener-survived",
+  "cleanup-process-group-survived", "cleanup-identity-timeout", "cleanup-listener-timeout", "cleanup-profile-timeout",
+  "cleanup-group-unverified", "cleanup-failed"]);
+const PROTOCOL_CATEGORIES = new Map([
+  ["Hidden target can be created only when remote debugging is enabled", "hidden-remote-debugging-required"],
+  ["Hidden target cannot be created for tab", "hidden-tab-forbidden"],
+  ["Hidden target cannot be created in a new window", "hidden-new-window-forbidden"],
+  ["Hidden target can be created only in background", "hidden-background-required"],
+]);
+function diagnosticCode(error) {
+  const message = error?.message;
+  const code = typeof message === "string" && message.startsWith("owned-cdp:") ? message.slice(10) : null;
+  return DIAGNOSTIC_CODES.has(code) ? code : "other";
+}
+function commandRejectionObservation(method, error) {
+  const code = error?.code;
+  return Object.freeze({ method: DIAGNOSTIC_METHODS.has(method) ? method : "other",
+    protocolCode: Number.isSafeInteger(code) && code >= -2147483648 && code <= 2147483647 ? code : null,
+    messageCategory: typeof error?.message === "string" ? PROTOCOL_CATEGORIES.get(error.message) || "unknown" : "unavailable" });
+}
+function launchLifecycleObservation({ child, exitObserved = false, processErrorObserved = false, exitPhase = null, stderr = "", stderrTruncated = false,
+  cleanupStatus = "not-started", cleanupFailure = null } = {}) {
+  const signals = ["SIGABRT", "SIGBUS", "SIGFPE", "SIGHUP", "SIGILL", "SIGINT", "SIGKILL", "SIGPIPE", "SIGQUIT", "SIGSEGV", "SIGTERM", "SIGTRAP", "SIGSYS", "SIGXCPU", "SIGXFSZ"];
+  return Object.freeze({ processCreated: !!child, exitObserved: exitObserved === true,
+    exitPhase: ["before-cleanup", "during-cleanup"].includes(exitPhase) ? exitPhase : null,
+    exitCode: Number.isSafeInteger(child?.exitCode) && child.exitCode >= 0 && child.exitCode <= 255 ? child.exitCode : null,
+    signal: child?.signalCode == null ? null : signals.includes(child.signalCode) ? child.signalCode : "other",
+    processErrorObserved: processErrorObserved === true, stderrCategory: stderrCategory(stderr), stderrCaptureTruncated: stderrTruncated === true,
+    cleanupStatus: ["not-started", "running", "succeeded", "failed"].includes(cleanupStatus) ? cleanupStatus : "unavailable",
+    firstCleanupFailure: cleanupFailure === null ? null : DIAGNOSTIC_CODES.has(cleanupFailure) ? cleanupFailure : "other" });
+}
+const lifecycleErrors = new WeakMap();
+function launchLifecycleFor(error) { return lifecycleErrors.get(error) || null; }
+
 class FlatConnection extends EventEmitter {
   constructor(socket, { commandMs = LIMITS.commandMs, bodyReservations = null } = {}) {
     super();
@@ -213,13 +259,24 @@ class FlatConnection extends EventEmitter {
     if (bodyReservations !== null && !(bodyReservations instanceof BodyReservations)) throw problem("body-profile-invalid");
     this.bodyReservations = bodyReservations;
     this.socket = socket; this.commandMs = commandMs; this.nextId = 0; this.pending = new Map();
-    this.failure = null; this.closed = false;
+    this.failure = null; this.closed = false; this.firstFailureObservation = null; this.closeObserved = false; this.errorObserved = false; this.closeCode = null; this.closeWasClean = null;
     socket.addEventListener("message", event => this.receive(event.data));
-    socket.addEventListener("close", () => this.fail("transport-closed"));
-    socket.addEventListener("error", () => this.fail("transport-error"));
+    socket.addEventListener("close", event => {
+      if (!this.closeObserved) {
+        this.closeCode = Number.isSafeInteger(event?.code) && event.code >= 0 && event.code <= 65535 ? event.code : null;
+        this.closeWasClean = typeof event?.wasClean === "boolean" ? event.wasClean : null;
+      }
+      this.closeObserved = true; this.fail("transport-closed");
+    });
+    socket.addEventListener("error", () => { this.errorObserved = true; this.fail("transport-error"); });
   }
-  fail(code) {
+  diagnostics() {
+    return Object.freeze({ firstFailure: this.firstFailureObservation, closeObserved: this.closeObserved, closeCode: this.closeCode, closeWasClean: this.closeWasClean, errorObserved: this.errorObserved });
+  }
+  fail(code, method, protocolError) {
     if (this.failure || this.closed) return;
+    this.firstFailureObservation = Object.freeze({ reason: DIAGNOSTIC_CODES.has(code) ? code : "other",
+      command: code === "command-rejected" ? commandRejectionObservation(method, protocolError) : null });
     this.failure = problem(code); this.bodyReservations?.abort();
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(this.failure); }
     this.pending.clear(); this.emit("failure", this.failure);
@@ -245,7 +302,7 @@ class FlatConnection extends EventEmitter {
         } catch { this.fail("body-reply-invalid"); return; }
       }
       this.pending.delete(packet.id); clearTimeout(pending.timer);
-      if (packet.error) { pending.reject(problem("command-rejected")); this.fail("command-rejected"); }
+      if (packet.error) { pending.reject(problem("command-rejected")); this.fail("command-rejected", pending.method, packet.error); }
       else if (!packet.result || typeof packet.result !== "object" || Array.isArray(packet.result)) { pending.reject(problem("reply-shape-invalid")); this.fail("reply-shape-invalid"); }
       else pending.resolve(packet.result);
     } else if (bytes > LIMITS.frameBytes) this.fail("unreserved-large-event");
@@ -402,11 +459,14 @@ async function closeOwnedChannels(connection, socket, boundedBodies = false) {
 async function launchOwnedChromium({ boundedBodies = false, suppressComponentBackgroundExtensions = false } = {}) {
   let pin, profile, child, identity, connection, socket, endpoint, exited, stderr = "", stderrTruncated = false, prerequisites, stopping = false, cleanupPromise;
   let executableFacts, profileFacts, observedProduct, actualArgs;
+  let exitObserved = false, processErrorObserved = false, exitPhase = null, cleanupStatus = "not-started", cleanupFailure = null;
+  const lifecycle = () => launchLifecycleObservation({ child, exitObserved, processErrorObserved, exitPhase, stderr, stderrTruncated, cleanupStatus, cleanupFailure });
+  const attachLifecycle = error => { lifecycleErrors.set(error, lifecycle()); return error; };
   const cleanup = () => cleanupPromise ||= (async () => {
-    stopping = true;
+    stopping = true; cleanupStatus = "running";
     let channelFailure;
     try { await closeOwnedChannels(connection, socket, boundedBodies); }
-    catch (error) { channelFailure = error; }
+    catch (error) { channelFailure = error; cleanupFailure ||= diagnosticCode(error); }
     try {
       await cleanupOwnedProcess({ child, identity, executable: pin?.executable, exited, endpoint }, {
         snapshot: (pid, executable) => deadline(processSnapshot(pid, executable), 1000, "cleanup-identity-timeout"),
@@ -417,7 +477,8 @@ async function launchOwnedChromium({ boundedBodies = false, suppressComponentBac
       });
       if (profile) await deadline(fs.rm(profile, { recursive: true, force: true }), 1500, "cleanup-profile-timeout");
       if (channelFailure) throw channelFailure;
-    } catch (error) { throw safeError(error, "cleanup-failed"); }
+      cleanupStatus = "succeeded";
+    } catch (error) { cleanupStatus = "failed"; cleanupFailure ||= diagnosticCode(error); throw safeError(error, "cleanup-failed"); }
   })();
   try {
     if (typeof boundedBodies !== "boolean") throw problem("body-profile-invalid");
@@ -432,8 +493,8 @@ async function launchOwnedChromium({ boundedBodies = false, suppressComponentBac
       .filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
     actualArgs = Object.freeze(launchArguments(profile, { suppressComponentBackgroundExtensions }));
     child = spawn(pin.executable.realpath, actualArgs, { env, detached: true, stdio: ["ignore", "ignore", "pipe"] });
-    exited = new Promise(resolve => child.once("exit", () => { connection?.fail("browser-exited"); resolve(); }));
-    child.on("error", () => connection?.fail("browser-process-error"));
+    exited = new Promise(resolve => child.once("exit", () => { exitObserved = true; exitPhase = stopping ? "during-cleanup" : "before-cleanup"; connection?.fail("browser-exited"); resolve(); }));
+    child.on("error", () => { processErrorObserved = true; connection?.fail("browser-process-error"); });
     child.stderr.on("data", bytes => {
       const part = bytes.subarray(0, 4097).toString("utf8");
       if (bytes.length > 4097 || stderr.length + part.length > 4096) stderrTruncated = true;
@@ -480,11 +541,11 @@ async function launchOwnedChromium({ boundedBodies = false, suppressComponentBac
       throw problem("observed-browser-pin-mismatch");
     }
     observedProduct = version.product;
-    return { connection, pin, prerequisites, provenance: launchProvenance(pin, executableFacts, profileFacts, observedProduct, actualArgs), verify: async () => { try { await verify(); } catch (error) { throw safeError(error, "endpoint-recheck-failed"); } }, close: cleanup };
+    return { connection, pin, prerequisites, lifecycle, provenance: launchProvenance(pin, executableFacts, profileFacts, observedProduct, actualArgs), verify: async () => { try { await verify(); } catch (error) { throw safeError(error, "endpoint-recheck-failed"); } }, close: cleanup };
   } catch (error) {
     prerequisites ||= await collectLaunchPrerequisites(pin?.executable);
-    try { await cleanup(); } catch (cleanupError) { throw attachLaunchProvenance(attachPrerequisites(cleanupError, prerequisites, stderr, stderrTruncated), launchProvenance(pin, executableFacts, profileFacts, observedProduct, actualArgs)); }
-    throw attachLaunchProvenance(attachPrerequisites(error, prerequisites, stderr, stderrTruncated), launchProvenance(pin, executableFacts, profileFacts, observedProduct, actualArgs));
+    try { await cleanup(); } catch (cleanupError) { throw attachLifecycle(attachLaunchProvenance(attachPrerequisites(cleanupError, prerequisites, stderr, stderrTruncated), launchProvenance(pin, executableFacts, profileFacts, observedProduct, actualArgs))); }
+    throw attachLifecycle(attachLaunchProvenance(attachPrerequisites(error, prerequisites, stderr, stderrTruncated), launchProvenance(pin, executableFacts, profileFacts, observedProduct, actualArgs)));
   }
 }
 function safeError(error, fallback) {
@@ -493,4 +554,4 @@ function safeError(error, fallback) {
 module.exports = { FlatConnection, launchOwnedChromium, parseActivePort, processIdentity, inspectEndpointRecords,
   launchArguments, readLaunchPin, deadline, problem, LIMITS, cleanupOwnedProcess, readSmall, stderrCategory, numericObservation, helperObservation,
   collectLaunchPrerequisites, prerequisiteDiagnosticsFor, attachPrerequisites, closeOwnedChannels, executableObservation, freshProfileObservation,
-  launchPolicyObservation, launchProvenance, launchProvenanceFor, attachLaunchProvenance, PROVENANCE_LIMITS };
+  launchPolicyObservation, launchProvenance, launchProvenanceFor, attachLaunchProvenance, PROVENANCE_LIMITS, diagnosticCode, commandRejectionObservation, launchLifecycleObservation, launchLifecycleFor };

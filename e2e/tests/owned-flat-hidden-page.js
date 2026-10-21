@@ -4,7 +4,7 @@ const { constants } = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const crypto = require("node:crypto");
-const { deadline } = require("./owned-flat-cdp");
+const { deadline, diagnosticCode } = require("./owned-flat-cdp");
 const reports = new WeakMap(), codes = new WeakMap();
 const bad = code => { const error = new Error(`owned-hidden-page:${code}`); codes.set(error, code); return error; };
 const id = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
@@ -60,7 +60,7 @@ async function runHiddenPageProbe(owned, { documentURL, downloadURL, timeoutMs =
   let c, origin, directory, context, created, attached, frame, runtime, initialRuntime, failure, closing = false, stopped = false;
   let stage = "configuration", count = 0, dropped = 0, navigation = false, navigated = false, loaded = false, bound = false;
   let targetBlankObserved = false, initialBlankVerified = false, resolveBlank, rejectBlank;
-  let downloadStarted, downloadDone = false, downloadIssued = false, saved, opfsMeasured = false, cleanupVerified = false;
+  let downloadStarted, downloadDone = false, downloadIssued = false, saved, opfsMeasured = false, cleanupVerified = false, cleanupReason = null;
   const trace = [], note = value => { if (trace.length === 64) { trace.shift(); dropped++; } trace.push(Object.freeze({ sequence: ++count, stage, ...value })); };
   let resolveLoad, rejectLoad, resolveDownload, rejectDownload;
   const load = new Promise((resolve, reject) => { resolveLoad = resolve; rejectLoad = reject; }); load.catch(() => {});
@@ -195,11 +195,12 @@ async function runHiddenPageProbe(owned, { documentURL, downloadURL, timeoutMs =
   finally {
     closing = true;
     try { await owned?.close(); if (!c?.closed || (c.failure && c.failure.message !== "owned-cdp:transport-disposed") || c.socket?.failure) throw bad("cleanup-failed"); cleanupVerified = true; }
-    catch { fail("cleanup-failed"); }
+    catch (error) { cleanupReason ||= codes.get(error) || diagnosticCode(error); fail("cleanup-failed"); }
     stopped = true; c?.off("event", event); c?.off("failure", transportFailure);
-    if (directory) try { await io.removeDirectory(directory); } catch { cleanupVerified = false; fail("download-cleanup-failed"); }
+    if (directory) try { await io.removeDirectory(directory); } catch { cleanupReason ||= "download-cleanup-failed"; cleanupVerified = false; fail("download-cleanup-failed"); }
   }
   const report = Object.freeze({ profile: "owned-hidden-page-capability-v1", success: !failure, stage, reason: codes.get(failure) || null,
+    transport: c?.diagnostics?.() || null, lifecycle: owned?.lifecycle?.() || null, firstCleanupFailure: cleanupReason,
     targetBound: bound, pausedAttachmentObserved: !!attached, initialBlankVerified, freshContextCreated: !!context, mainFrameObserved: !!frame,
     opfsMeasured, opfsSizeBytes: opfsMeasured ? OPFS.length : null, downloadStarted: !!downloadStarted, downloadCompleted: downloadDone,
     savedDownload: saved || null, terminalCleanupVerified: cleanupVerified, cacheState: "unmeasured", serviceWorkerState: "unmeasured",

@@ -1,6 +1,7 @@
 // Owns only a test operation in the fresh context of an already owned launcher.
 // Public Target/Page/Runtime census is independent of the Network byte ledger.
 // No output from this proposal is admitted by production JS/Python consumers.
+const crypto = require("node:crypto");
 const { createOwnedFrontendState } = require("./owned-flat-frontend-state");
 const { BodyReservations } = require("./owned-flat-body-reservations");
 const { deadline } = require("./owned-flat-cdp");
@@ -27,19 +28,24 @@ const COMPONENTS = Object.freeze({
 });
 function targetURLObservation(value) {
   const unknown = { scheme: "invalid", canonicalExtensionId: null, knownComponent: "unavailable", exactKnownWorkerPath: null,
-    credentialsPresent: null, queryPresent: null, fragmentPresent: null };
+    credentialsPresent: null, queryPresent: null, fragmentPresent: null, internalHost: null, internalPathSha256: null };
   if (typeof value !== "string" || !value || value.length > 4096) return Object.freeze({ ...unknown, scheme: value === undefined ? "missing" : "invalid" });
   try {
     const url = new URL(value), protocol = url.protocol.slice(0, -1);
-    const scheme = ["chrome-extension", "http", "https", "about", "blob", "data", "file", "chrome"].includes(protocol) ? protocol : "other";
+    const scheme = ["chrome-extension", "http", "https", "about", "blob", "data", "file", "chrome", "chrome-untrusted"].includes(protocol) ? protocol : "other";
     const credentialsPresent = !!(url.username || url.password), queryPresent = !!url.search, fragmentPresent = !!url.hash;
     const canonicalExtension = scheme === "chrome-extension" && !credentialsPresent && !url.port && url.href === value && /^[a-p]{32}$/.test(url.hostname);
+    const canonicalInternal = ["chrome", "chrome-untrusted"].includes(scheme) && !credentialsPresent && !url.port && url.href === value &&
+      url.hostname.length <= 253 && url.hostname.split(".").every(label => label.length <= 63 && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(label));
     const component = canonicalExtension && Object.hasOwn(COMPONENTS, url.hostname) ? COMPONENTS[url.hostname] : null;
     // Only canonical software IDs from this owned test browser are exposed.
-    // No URL, host outside this grammar, path, query or fragment is returned.
+    // Canonical internal browser hosts identify implementation UI. Paths are
+    // SHA256 of the URL parser pathname UTF-8 bytes; no query/fragment is hashed
+    // or printed. These are diagnostics, never an extra-target acceptance rule.
     return Object.freeze({ scheme, canonicalExtensionId: canonicalExtension ? url.hostname : null, knownComponent: component?.label || (scheme === "chrome-extension" ? "unknown-extension" : "not-extension"),
       exactKnownWorkerPath: component ? url.pathname === component.worker && !queryPresent && !fragmentPresent : null,
-      credentialsPresent, queryPresent, fragmentPresent });
+      credentialsPresent, queryPresent, fragmentPresent, internalHost: canonicalInternal ? url.hostname : null,
+      internalPathSha256: canonicalInternal ? `sha256:${crypto.createHash("sha256").update(url.pathname).digest("hex")}` : null });
   } catch { return Object.freeze(unknown); }
 }
 
@@ -97,6 +103,7 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
     trace.push(Object.freeze({ sequence: ++sequence, stage, ...value }));
   };
   const snapshot = reason => Object.freeze({ profile: "owned-controller-startup-diagnostic-v1", stage, reason, latchedReason: reasons.get(failure) || null,
+    transport: c.diagnostics?.() || null, lifecycle: owned.lifecycle?.() || null,
     contextCreated: !!context, pageAttached: !!page, frameObserved: !!frame, navigationIssued,
     runtimeContextSeen: !!runtimeContext, runtimeFrameMatches: !!runtimeContext && !!frame && runtimeContext.frame === frame,
     navigationFrameMatches: !!frame && !!navigationFrame && frame === navigationFrame,
@@ -125,7 +132,7 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
       // The tiny diagnostic cap applies only to retained/control/lifecycle events.
       if (method === "Network.dataReceived") return;
       note({ kind: "event", event: EVENTS.has(method) ? method : "other", session: alias(session), afterFailure: !!failure,
-        request: alias(p.requestId), target: alias(p.targetInfo?.targetId), parent: alias(p.targetInfo?.parentId),
+        request: alias(p.requestId), target: alias(p.targetInfo?.targetId ?? p.targetId), parent: alias(p.targetInfo?.parentId),
         opener: alias(p.targetInfo?.openerId), openerFrame: alias(p.targetInfo?.openerFrameId), parentFrame: alias(p.targetInfo?.parentFrameId),
         openerPresent: id(p.targetInfo?.openerId), openerIsPage: !!pageTarget && p.targetInfo?.openerId === pageTarget,
         targetContext: alias(p.targetInfo?.browserContextId), targetContextPresent: id(p.targetInfo?.browserContextId),
@@ -145,7 +152,7 @@ async function openOwnedFrontendController(owned, { documentURL, workerURLs, exp
         mainContextMatches: !!runtimeContext && (p.context?.id || p.executionContextId) === runtimeContext.id,
         contextBlankOrigin: typeof p.context?.origin === "string" ? ["", "://"].includes(p.context.origin) : null,
         aboutBlankURL: (p.request?.url || p.frame?.url || p.targetInfo?.url) === "about:blank",
-        targetURLKind: urlKind(p.targetInfo?.url),
+        targetURLKind: urlKind(p.targetInfo?.url), targetURLFacts: p.targetInfo ? targetURLObservation(p.targetInfo.url) : null,
         documentURLMatches: typeof (p.request?.url || p.frame?.url || p.targetInfo?.url) === "string" ? (p.request?.url || p.frame?.url || p.targetInfo?.url) === documentURL : null });
       // A latched failure admits no further observations into the byte/census
       // state. Retain only bounded diagnostics until normal cleanup closes it.

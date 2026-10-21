@@ -249,7 +249,7 @@ async function observedTargetURL(url){const f=fixture();f.socket.inventoryReply=
  expect(f.socket.calls.some(c=>c.method === "Target.createBrowserContext")).toBe(false);return report.trace.at(-1).targetInventory.targets[0].urlFacts;}
 for(const [label,host,worker] of componentExamples)test(`public ${label} component is diagnosed while startup remains rejected`,async()=>{
  const facts=await observedTargetURL(`chrome-extension://${host}/${worker}`);
- expect(facts).toEqual({scheme:"chrome-extension",canonicalExtensionId:host,knownComponent:label,exactKnownWorkerPath:true,credentialsPresent:false,queryPresent:false,fragmentPresent:false});expect(Object.isFrozen(facts)).toBe(true);
+ expect(facts).toEqual({scheme:"chrome-extension",canonicalExtensionId:host,knownComponent:label,exactKnownWorkerPath:true,credentialsPresent:false,queryPresent:false,fragmentPresent:false,internalHost:null,internalPathSha256:null});expect(Object.isFrozen(facts)).toBe(true);
 });
 for(const [name,url,scheme,label,worker] of [
  ["unknown","chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/SECRET","chrome-extension","unknown-extension",null],
@@ -354,4 +354,55 @@ test('post-failure diagnostic packets retain hard ring and alias caps without ne
  const report=controllerDiagnosticsFor(await rejected(f.open()));expect(report.trace).toHaveLength(64);expect(report.aliases).toBe(64);expect(report.aliasOverflow).toBe(true);expect(report.dropped).toBeGreaterThan(0);
  expect(report.latchedReason).toBe('unsupported-target-census');expect(report.trace.some(item=>item.event==='other'&&item.afterFailure)).toBe(true);expect(JSON.stringify(report)).not.toContain('SECRET');
  expect(f.socket.calls.some(p=>/runIfWaiting|resume|getResponseBody|Page.navigate/.test(p.method))).toBe(false);
+});
+
+// Falsification: internal browser UI diagnostics expose only canonical bounded
+// chrome/chrome-untrusted hosts plus a pathname hash, never arbitrary URL data.
+for (const [name, url, host] of [
+  ["chrome", "chrome://webui-browser/SECRET/path?SECRET#SECRET", "webui-browser"],
+  ["untrusted", "chrome-untrusted://webui-toolbar/SECRET", "webui-toolbar"],
+  ["bounded-host", "chrome://" + "a".repeat(63) + "/SECRET", "a".repeat(63)],
+  ["long-host", "chrome://" + "a".repeat(64) + "/SECRET", null],
+  ["credentials", "chrome://SECRET@webui-browser/SECRET", null],
+  ["port", "chrome://webui-browser:123/SECRET", null],
+  ["encoded-host", "chrome://%77ebui-browser/SECRET", null],
+  ["uppercase-host", "chrome://WEBUI-browser/SECRET", null],
+  ["host-dot", "chrome://webui-toolbar.top-chrome/SECRET", "webui-toolbar.top-chrome"],
+  ["empty-label", "chrome://webui..top-chrome/SECRET", null],
+  ["trailing-dot", "chrome://webui.top-chrome./SECRET", null],
+  ["maximum-host", "chrome://" + [63,63,63,61].map(n => "a".repeat(n)).join(".") + "/SECRET", [63,63,63,61].map(n => "a".repeat(n)).join(".")],
+  ["overlong-host", "chrome://" + [63,63,63,62].map(n => "a".repeat(n)).join(".") + "/SECRET", null],
+  ["host-underscore", "chrome://webui_browser/SECRET", null],
+  ["host-leading-dash", "chrome://-webui/SECRET", null],
+  ["normalized-path", "chrome://webui-browser/x/../SECRET", null],
+  ["wrong-scheme", "https://webui-browser/SECRET", null],
+  ["space-prefix", " chrome://webui-browser/SECRET", null],
+]) test(`internal target URL diagnostic ${name}`, async () => {
+  const facts = await observedTargetURL(url); expect(facts.internalHost).toBe(host);
+  if (host) expect(facts.internalPathSha256).toBe("sha256:" + require("node:crypto").createHash("sha256").update(new URL(url).pathname).digest("hex"));
+  else expect(facts.internalPathSha256).toBe(null);
+  expect(JSON.stringify(facts)).not.toMatch(/SECRET|:\/\//); expect(Object.isFrozen(facts)).toBe(true); expect(JSON.stringify(facts).length).toBeLessThan(768);
+});
+test("internal target event identity is diagnostic after rejection and remains bounded", async () => {
+  const f = fixture(), send = f.socket.send.bind(f.socket);
+  f.socket.send = text => { if (JSON.parse(text).method === "Target.createTarget") {
+    f.socket.event("Target.targetCreated", { targetInfo: { targetId: "SECRET_OTHER", type: "other", url: "", browserContextId: "context" } });
+    f.socket.event("Target.targetCreated", { targetInfo: { targetId: "SECRET_UI", type: "browser_ui", url: "chrome-untrusted://webui-toolbar/SECRET?SECRET#SECRET", browserContextId: "context" } });
+  } send(text); };
+  const report = controllerDiagnosticsFor(await rejected(f.open())), event = report.trace.find(item => item.targetType === "browser_ui");
+  expect(event).toMatchObject({ afterFailure: true, targetContextOwnedMatch: true, targetURLFacts: { scheme: "chrome-untrusted", internalHost: "webui-toolbar", queryPresent: true, fragmentPresent: true } });
+  expect(report.latchedReason).toBe("unsupported-target-census"); expect(report.pageAttached).toBe(false); expect(JSON.stringify(report)).not.toContain("SECRET");
+  expect(f.socket.calls.some(item => /runIfWaiting|resume|getResponseBody|Page.navigate/.test(item.method))).toBe(false);
+});
+
+for (const method of ["Target.targetDestroyed", "Target.targetCrashed", "Target.detachedFromTarget"]) test(`direct target lifecycle alias survives ${method} after rejection`, async () => {
+  const f = fixture(), send = f.socket.send.bind(f.socket);
+  f.socket.send = text => { if (JSON.parse(text).method === "Target.createTarget") {
+    f.socket.event("Target.targetCreated", { targetInfo: { targetId: "SECRET_TRANSIENT", type: "other", url: "", browserContextId: "context" } });
+    f.socket.event(method, { targetId: "SECRET_TRANSIENT", sessionId: "SECRET_SESSION" });
+  } send(text); };
+  const report = controllerDiagnosticsFor(await rejected(f.open())), created = report.trace.find(item => item.event === "Target.targetCreated"), ended = report.trace.find(item => item.event === method);
+  expect(ended.target).toBe(created.target); expect(ended.target).toMatch(/^i[0-9]+$/); expect(ended.afterFailure).toBe(true);
+  expect(report.latchedReason).toBe("unsupported-target-census"); expect(JSON.stringify(report)).not.toContain("SECRET");
+  expect(f.socket.calls.some(item => /runIfWaiting|resume|getResponseBody|Page.navigate/.test(item.method))).toBe(false);
 });

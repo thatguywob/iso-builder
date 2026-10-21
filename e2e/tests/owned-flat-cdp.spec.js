@@ -12,7 +12,7 @@ const http = require("node:http");
 const { FlatConnection, launchOwnedChromium, parseActivePort, processIdentity, inspectEndpointRecords,
   launchArguments, cleanupOwnedProcess, readSmall, deadline, problem, LIMITS, stderrCategory, numericObservation, helperObservation,
   collectLaunchPrerequisites, prerequisiteDiagnosticsFor, attachPrerequisites, executableObservation, freshProfileObservation,
-  launchPolicyObservation, launchProvenance, launchProvenanceFor, attachLaunchProvenance, PROVENANCE_LIMITS } = require("./owned-flat-cdp");
+  launchPolicyObservation, launchProvenance, launchProvenanceFor, attachLaunchProvenance, PROVENANCE_LIMITS, diagnosticCode, commandRejectionObservation, launchLifecycleObservation } = require("./owned-flat-cdp");
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const PORT = "42123\n/devtools/browser/12345678-abcd-abcd-abcd-123456789abc";
@@ -989,4 +989,81 @@ test("production-layer real fixture alone opts in and launcher passes the same c
  const launcher=await fs.readFile(path.join(__dirname,"owned-flat-cdp.js"),"utf8");
  expect(launcher).toContain("child = spawn(pin.executable.realpath, actualArgs,");
  expect(launcher).toContain("launchProvenance(pin, executableFacts, profileFacts, observedProduct, actualArgs)");
+});
+
+// Falsification: protocol rejection is not process death. No protocol text,
+// unlisted method, stderr/path/env value or cleanup exception may escape.
+for (const [message, category] of [
+  ["Hidden target can be created only when remote debugging is enabled", "hidden-remote-debugging-required"],
+  ["Hidden target cannot be created for tab", "hidden-tab-forbidden"],
+  ["Hidden target cannot be created in a new window", "hidden-new-window-forbidden"],
+  ["Hidden target can be created only in background", "hidden-background-required"],
+  ["Hidden target can be created only when remote debugging is enabled SECRET", "unknown"],
+  [undefined, "unavailable"],
+]) test(`fixed hidden protocol rejection category ${category}`, async () => {
+  const socket = new MockSocket(), c = new FlatConnection(socket), task = c.send("Target.createTarget", { hidden: true });
+  socket.reply({ id: 1, error: { code: -32000, message, data: { SECRET: "https://SECRET.invalid" } } });
+  await expect(task).rejects.toThrow(/^owned-cdp:command-rejected$/);
+  const before = c.diagnostics(); expect(before).toEqual({ firstFailure: { reason: "command-rejected",
+    command: { method: "Target.createTarget", protocolCode: -32000, messageCategory: category } }, closeObserved: false, closeCode: null, closeWasClean: null, errorObserved: false });
+  socket.emit("close"); socket.emit("error", Error("SECRET")); c.fail("browser-exited"); c.close();
+  expect(c.diagnostics().firstFailure).toBe(before.firstFailure); expect(before.closeObserved).toBe(false);
+  expect(c.diagnostics()).toMatchObject({ closeObserved: true, errorObserved: true });
+  expect(Object.isFrozen(before)).toBe(true); expect(Object.isFrozen(before.firstFailure.command)).toBe(true);
+  expect(JSON.stringify(c.diagnostics())).not.toContain("SECRET"); expect(JSON.stringify(c.diagnostics()).length).toBeLessThan(384);
+});
+for (const code of [NaN, Infinity, -Infinity, 0.1, "-32000", null, undefined, -2147483649, 2147483648, Number.MAX_SAFE_INTEGER]) {
+  test(`protocol numeric diagnostic rejects malformed or out-of-bound code ${String(code)}`, () => {
+    const result = commandRejectionObservation("SECRET".repeat(10000), { code, message: "SECRET".repeat(10000), data: "SECRET" });
+    expect(result).toEqual({ method: "other", protocolCode: null, messageCategory: "unknown" });
+    expect(JSON.stringify(result).length).toBeLessThan(100);
+  });
+}
+for (const code of [-2147483648, -32602, 0, 2147483647]) test(`protocol numeric diagnostic retains bounded integer ${code}`, () => {
+  expect(commandRejectionObservation("Target.createTarget", { code }).protocolCode).toBe(code);
+});
+for (const [event, reason] of [["close", "transport-closed"], ["error", "transport-error"], ["process", "browser-exited"]]) {
+  test(`protocol diagnostic distinguishes ${event} before command reply`, async () => {
+    const socket = new MockSocket(), c = new FlatConnection(socket), task = c.send("Target.createTarget");
+    if (event === "process") c.fail("browser-exited"); else socket.emit(event, Error("SECRET"));
+    await expect(task).rejects.toThrow(reason); expect(c.diagnostics().firstFailure).toEqual({ reason, command: null }); c.close();
+  });
+}
+test("lifecycle report retains bounded existing exit and cleanup observations", () => {
+  const result = launchLifecycleObservation({ child: { exitCode: 1, signalCode: "SIGABRT", SECRET: true }, exitObserved: true,
+    exitPhase: "before-cleanup", processErrorObserved: true, stderr: "SECRET No usable sandbox!", stderrTruncated: true,
+    cleanupStatus: "failed", cleanupFailure: "cleanup-process-group-survived" });
+  expect(result).toMatchObject({ processCreated: true, exitObserved: true, exitCode: 1, signal: "SIGABRT", exitPhase: "before-cleanup",
+    processErrorObserved: true, stderrCategory: "no-usable-sandbox", stderrCaptureTruncated: true,
+    cleanupStatus: "failed", firstCleanupFailure: "cleanup-process-group-survived" });
+  expect(Object.isFrozen(result)).toBe(true); expect(JSON.stringify(result)).not.toContain("SECRET"); expect(JSON.stringify(result).length).toBeLessThan(512);
+  expect(launchLifecycleObservation()).toMatchObject({ processCreated: false, exitObserved: false, exitCode: null, signal: null, exitPhase: null, cleanupStatus: "not-started" });
+});
+for (const exitCode of [-1, 256, Infinity, NaN, 0.5, "SECRET", undefined]) test(`lifecycle diagnostic redacts malformed exit ${String(exitCode)}`, () => {
+  const value = launchLifecycleObservation({ child: { exitCode, signalCode: "SECRET" }, exitPhase: "SECRET", stderr: "SECRET".repeat(10000),
+    cleanupStatus: "SECRET", cleanupFailure: "SECRET" });
+  expect(value).toMatchObject({ exitCode: null, signal: "other", exitPhase: null, stderrCategory: "unknown", cleanupStatus: "unavailable", firstCleanupFailure: "other" });
+  expect(JSON.stringify(value)).not.toContain("SECRET"); expect(diagnosticCode(Error("owned-cdp:SECRET"))).toBe("other");
+});
+
+for (const code of [0, 1000, 1006, 65535, -1, 65536, 1.5, Infinity, NaN, "SECRET", undefined]) test(`socket close diagnostic code ${String(code)}`, () => {
+  const socket = new MockSocket(), c = new FlatConnection(socket);
+  socket.emit("close", { code, wasClean: true, reason: "https://SECRET.invalid/BODY_SECRET" });
+  const report = c.diagnostics(); expect(report.closeCode).toBe(Number.isSafeInteger(code) && code >= 0 && code <= 65535 ? code : null);
+  expect(report.closeWasClean).toBe(true); expect(report.firstFailure.reason).toBe("transport-closed");
+  socket.emit("close", { code: 1234, wasClean: false }); expect(c.diagnostics()).toEqual(report);
+  expect(JSON.stringify(report)).not.toContain("SECRET"); c.close();
+});
+test("close missing or malformed clean state remains unknown", () => {
+  for (const wasClean of [undefined, null, "SECRET", 1]) {
+    const socket = new MockSocket(), c = new FlatConnection(socket); socket.emit("close", { wasClean });
+    expect(c.diagnostics()).toMatchObject({ closeCode: null, closeWasClean: null }); c.close();
+  }
+});
+test("normal disposal keeps cleanup semantics when owned process later exits", () => {
+  const socket = new MockSocket(), c = new FlatConnection(socket); let failures = 0; c.on("failure", () => failures++);
+  c.close(); const failure = c.failure; c.fail("browser-exited"); c.fail("browser-process-error");
+  socket.emit("close", { code: 1000, wasClean: true, reason: "SECRET" });
+  expect(c.closed).toBe(true); expect(c.failure).toBe(failure); expect(failures).toBe(1);
+  expect(c.diagnostics()).toMatchObject({ firstFailure: { reason: "transport-disposed", command: null }, closeCode: 1000, closeWasClean: true });
 });
