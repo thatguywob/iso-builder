@@ -53,6 +53,25 @@ Before you open a pull request, test your changes locally in each affected compo
   golangci-lint run
   ```
 
+### 4. Qualification contract tests (`tests/`)
+- Install the Python test dependencies:
+  ```sh
+  python3 -m pip install pytest PyYAML
+  ```
+- From the repository root, run the fixture and workflow-contract suite:
+  ```sh
+  python3 -m pytest -q tests
+  ```
+  These tests do not build or install a real ISO.
+
+### 5. Relay Worker (`worker/`)
+- The relay unit tests use Node.js's built-in `node:test` runner. With Node.js
+  installed, run:
+  ```sh
+  cd worker
+  npm test
+  ```
+
 ---
 
 ## Submitting Pull Requests
